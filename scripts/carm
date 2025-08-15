@@ -48,7 +48,7 @@ class ArmDriver:
             time.sleep(0.005)
 
 def send_cmd(args):
-    arm       = carm.Carm(args.addr,mit=args.mit)
+    arm       = carm.Carm(args.addr)
 
     cmd = args.cmd
 

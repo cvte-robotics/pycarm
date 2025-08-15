@@ -10,8 +10,11 @@ authors = [
 ]
 description = "Python interface for cvte arm."
 requires-python = ">=3.6"
-dependencies = [
-    "websocket-client",
+dependencies = ["websocket-client"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 
 [project.scripts]
@@ -20,13 +23,9 @@ carm_ros2 = "carm:ros2_main"
 
 [tool.setuptools]
 packages = ["carm"]
-package-dir = {"" = "src"}  # If using src layout, otherwise remove
 
 [tool.setuptools.package-data]
 carm = [
     "__init__.py",
     "carm.py",
 ]
-
-[tool.setuptools.zip-safe]
-zip-safe = true
