@@ -2,6 +2,7 @@ import websocket
 import threading
 import json
 import uuid
+import time
 
 class Carm:
     def __init__(self, addr = "ws://100.84.147.120:8090"):
@@ -42,6 +43,8 @@ class Carm:
                              "type":"version"})
 
     def set_ready(self):
+        while self.state is None:
+            time.sleep(0.1)
         arm = self.state["arm"][0]
         if arm["fsm_state"] == "POSITION" or arm["fsm_state"] == "MIT":
             return True
@@ -261,10 +264,10 @@ class Carm:
         
     def on_open(self, ws):
         self.open_ready.set()
-        print("连接成功")
+        print("Connected successfully.")
 
     def on_close(self, ws, code, close_msg):
-        print("连接断开",code, close_msg)
+        print("Disconnected, please check your --addr",code, close_msg)
 
     def on_message(self, ws, message):
         msg = json.loads(message)
@@ -289,9 +292,6 @@ class Carm:
 
 if __name__ == "__main__":
     carm = Carm()
-    print("version:",carm.version)
-    print("limits:", carm.limit)
-    print("state:", carm.state)
 
     carm.track_joint(carm.joint_pos)
     print(1)
