@@ -48,7 +48,7 @@ class ArmDriver:
             time.sleep(0.005)
 
 def send_cmd(args):
-    arm       = carm.Carm(args.addr,mit=args.mit)
+    arm       = carm.Carm(args.addr)
 
     cmd = args.cmd
 
@@ -72,10 +72,7 @@ def driver_main(args):
     
     driver.loop()
     
-    
-    
-# 测试代码
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--addr", type=str, default="ws://localhost:8090", help="Device address, including ip and port")
     parser.add_argument("--cmd", type=str, default="", help="Send command instead of start driver, support enable,disable,remote")
@@ -102,5 +99,10 @@ if __name__ == "__main__":
         driver_main(args)
     else:
         send_cmd(args)
+   
+    
+# 测试代码
+if __name__ == "__main__":
+    main()
     
     

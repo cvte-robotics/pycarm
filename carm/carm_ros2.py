@@ -19,7 +19,7 @@ class ArmDriver(Node):
         
         self.arm       = carm.Carm(args.addr)
         if args.mit:
-            self.arm.set_control_mode(3)
+            self.arm.set_control_mode(2)
         else:
             self.arm.set_control_mode(1)
 
@@ -60,9 +60,8 @@ class ArmDriver(Node):
             self.pub_end.publish(end_msg)
 
             time.sleep(0.005)
-   
-# 测试代码
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--addr", type=str, default="ws://localhost:8090", help="Device address, including ip and port")
     parser.add_argument("--device", type=str, default="carm", help="device name, used as topic prefix")
@@ -90,5 +89,8 @@ if __name__ == "__main__":
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-    
+
+# 测试代码
+if __name__ == "__main__":
+    main()
     

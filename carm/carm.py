@@ -23,7 +23,7 @@ class Carm:
         self.res_pool  = {}
         self.task_pool = {}
 
-        self.reader = threading.Thread(target=self.recv_loop).start()
+        self.reader = threading.Thread(target=self.recv_loop, daemon=True).start()
         self.open_ready = threading.Event()
         self.open_ready.wait()
         self.limit = self.get_limits()["params"]
@@ -202,6 +202,20 @@ class Carm:
                              "arm_index":0,
                              "point_type":{"space":1},
                              "data":{"user":user,"tool":tool, "target_pos": pos, "speed":100}}) 
+        
+        if sync and res["recv"]=="Task_Recieve":
+            self.wait_task(res["task_key"])
+
+        return res
+    
+
+    def move_line(self, pos, speed=50, sync=True, user=0, tool=0):
+        res =  self.request({"command":"webRecieveTasks",
+                             "task_id":"TASK_MOVL",
+                             "task_level":"Task_General",
+                             "arm_index":0,
+                             "point_type":{"space":1},
+                             "data":{"user":user,"tool":tool, "target_pos": pos, "speed":speed}}) 
         
         if sync and res["recv"]=="Task_Recieve":
             self.wait_task(res["task_key"])
