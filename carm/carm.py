@@ -210,12 +210,18 @@ class Carm:
     
 
     def move_line(self, pos, speed=50, sync=True, user=0, tool=0):
+        ret = self.invK(pos, self.joint_pos, user, tool) # check IK first
+        if ret["recv"] != "Task_Recieve":
+            print("Inverse kinematics failed:", ret)
+            return ret
+
+        pos = ret["data"]["joint1"]
         res =  self.request({"command":"webRecieveTasks",
                              "task_id":"TASK_MOVL",
                              "task_level":"Task_General",
                              "arm_index":0,
-                             "point_type":{"space":1},
-                             "data":{"user":user,"tool":tool, "target_pos": pos, "speed":speed}}) 
+                             "point_type":{"space":0},
+                             "data":{"user":user,"tool":tool, "point": pos, "speed":speed}}) 
         
         if sync and res["recv"]=="Task_Recieve":
             self.wait_task(res["task_key"])
@@ -249,11 +255,16 @@ class Carm:
     def invK(self, cart_pose, ref_joints, user=0, tool=0):
         if not type(cart_pose[0]) is list:
             cart_pose = [cart_pose, ]
+            ref_joints = [ref_joints, ]
         assert(len(cart_pose) == len(ref_joints))
+        data = {"user":user,"tool":tool,"point_cnt":len(cart_pose)}
+        for i in range(len(ref_joints)):
+            data[f"point{i+1}"] = cart_pose[i]
+            data[f"refer{i+1}"] = ref_joints[i]
         return self.request({"command":"getKinematics",
                              "task_id":"inverse",
                              "arm_index":0,
-                             "data":{"user":user,"tool":tool,"point_cnt":len(cart_pose)}})
+                             "data":data})
 
     def request(self, req):
         event = threading.Event()
