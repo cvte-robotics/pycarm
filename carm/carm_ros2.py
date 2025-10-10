@@ -46,9 +46,9 @@ class ArmDriver(Node):
         while True:
             joint_msg = JointState()          # list of string
             joint_msg.header.stamp = self.get_clock().now().to_msg()
-            joint_msg.position = self.arm.joint_pos
-            joint_msg.velocity = self.arm.joint_vel
-            joint_msg.effort   = self.arm.joint_tau
+            joint_msg.position = np.array(self.arm.joint_pos).tolist()
+            joint_msg.velocity = np.array(self.arm.joint_vel).tolist()
+            joint_msg.effort   = np.array(self.arm.joint_tau).tolist()
             joint_msg.position.append(self.arm.gripper_state["gripper_pos"])
             self.pub_joint.publish(joint_msg)
             

@@ -13,10 +13,7 @@ class ArmDriver:
         self.args = args
         
         self.arm       = carm.Carm(args.addr)
-        if args.mit:
-            self.arm.set_control_mode(3)
-        else:
-            self.arm.set_control_mode(1)
+        self.arm.set_control_mode(args.mode)
 
         self.arm.set_speed_level(args.speed)
 
@@ -28,8 +25,14 @@ class ArmDriver:
         self.sub_end   = messenger.subscribe(args.end_cmd_topic, 0, lambda msg:self.end_callback(msg))
 
     def end_callback(self, msg):  
-        position = np.frombuffer(msg["position"],dtype=np.float64).tolist()
-        self.arm.track_pose(position)
+        position = msg["position"]
+        if type(position) != tuple:
+            position = np.frombuffer(msg["position"],dtype=np.float64).tolist()
+
+        if position > 7:
+            self.arm.track_pose(position[:7], position[7])
+        else:
+            self.arm.track_pose(position)
 
         if self.args.enable_ik:
             ret = self.arm.invK(position, ref_joints=self.arm.joint_pos)
@@ -41,9 +44,15 @@ class ArmDriver:
             self.pub_joint_ik.publish({"header": msg["header"], "position": pos})
 
 
-    def joint_callback(self, msg):        
-        position = np.frombuffer(msg["position"],dtype=np.float64).tolist()        
-        self.arm.track_joint(position)
+    def joint_callback(self, msg):     
+        position = msg["position"]
+        if type(position) != tuple:   
+            position = np.frombuffer(msg["position"],dtype=np.float64).tolist()  
+
+        if position > 6:
+            self.arm.track_joint(position[:6], position[6])
+        else:
+            self.arm.track_joint(position)      
 
     def loop(self):
         while True:
@@ -52,8 +61,12 @@ class ArmDriver:
             nanosec = int((stamp - sec) * 1e9)
             header  = {"stamp": {"sec": sec, "nanosec": nanosec},"frame_id": "base_link"}
 
-            end_msg = {"header": header, "position": self.arm.cart_pose + [self.arm.gripper_state["gripper_pos"],]}
-            joints_msg = {"header": header, "position": self.arm.joint_pos + [self.arm.gripper_state["gripper_pos"],]}
+            end_msg = {"header": header, 
+                       "position": self.arm.cart_pose + [self.arm.gripper_state["gripper_pos"],]}
+            joints_msg = {"header": header, 
+                          "position": self.arm.joint_pos + [self.arm.gripper_state["gripper_pos"],], 
+                          "velocity": self.arm.joint_vel + [self.arm.gripper_state["gripper_vel"],], 
+                          "effort": self.arm.joint_tau + [self.arm.gripper_state["gripper_tau"],]}
             
             self.pub_joint.publish(joints_msg)
             self.pub_end.publish(end_msg)
@@ -92,13 +105,13 @@ def main():
     parser.add_argument("--cmd", type=str, default="", help="Send command instead of start driver, support enable,disable,remote")
     parser.add_argument("--device", type=str, default="carm", help="device name, used as topic prefix")
     parser.add_argument("--dds", type=str, default="svar_messenger_ros2", help="the dds plugin, default is ros2, options: svar_zbus, svar_lcm")
-    parser.add_argument("--mit", action="store_true", help="Enable mit mode")
+    parser.add_argument("--mode", type=int, default=1, help="The arm control mode: POSITION:1, MIT:2, MASTER:3")
     parser.add_argument("--joint_topic", type=str, default="", help="the joints status topic")
     parser.add_argument("--end_topic", type=str, default="", help="the joints status topic")
     parser.add_argument("--joint_cmd_topic", type=str, default="", help="the joints cmd topic")
     parser.add_argument("--joint_cmd_ik_topic", type=str, default="", help="the joints cmd ik topic, this means both end_cmd_topic will be transformed with ik")
     parser.add_argument("--end_cmd_topic", type=str, default="", help="the end cmd topic")
-    parser.add_argument("--speed", type=float, default=5.0, help="the speed level")
+    parser.add_argument("--speed", type=float, default=50.0, help="the speed level")
     
     args = parser.parse_args()
     

@@ -425,6 +425,20 @@ class Carm:
     def move_pvt(self, target_traj, gripper_pos = [], stamps = [], is_sync=True):
         pass # TODO
 
+    def set_redundancy_tau(self, redundancy_tau, end_effector=None):
+        """
+        设置冗余关节的力矩
+        Args:
+            redundancy_tau (list): The redundancy joint torque.
+            end_effector (int, optional): The end effector index.
+        Returns:
+            dict: The response from the arm.
+        """
+        return self.request({"command":"setRedundancyTau",
+                             "arm_index":0,
+                             "is_master":True,
+                             "redundancy_tau":redundancy_tau})
+
     def invK(self, cart_pose, ref_joints, user=0, tool=0):
         """
         逆解
@@ -465,6 +479,17 @@ class Carm:
         
     def __cbk_status(self, message):
         self.state = message
+
+        if not "arm" in message:
+            return
+        
+        arm_json = message["arm"][0]
+        if "last_task_key" not in arm_json:
+            return
+        
+        task = arm_json["last_task_key"]
+        self.task_pool[task]["event"].set()
+        
 
     def __cbk_taskfinish(self, message):
         task = message["task_key"]
