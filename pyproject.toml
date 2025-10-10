@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carm"
-version = "0.0.20250822"
+version = "0.0.20250911"
 authors = [
     {name = "Yong Zhao", email = "zhaoyong11933@cvte.com"},
 ]

@@ -18,8 +18,11 @@ class ArmDriver:
         else:
             self.arm.set_control_mode(1)
 
+        self.arm.set_speed_level(args.speed)
+
         self.pub_joint = messenger.advertise(args.joint_topic, 0)
         self.pub_end   = messenger.advertise(args.end_topic, 0)
+        self.pub_joint_ik = messenger.advertise(args.joint_cmd_ik_topic, 0)
         
         self.sub_joint = messenger.subscribe(args.joint_cmd_topic, 0, lambda msg:self.joint_callback(msg))
         self.sub_end   = messenger.subscribe(args.end_cmd_topic, 0, lambda msg:self.end_callback(msg))
@@ -27,6 +30,16 @@ class ArmDriver:
     def end_callback(self, msg):  
         position = np.frombuffer(msg["position"],dtype=np.float64).tolist()
         self.arm.track_pose(position)
+
+        if self.args.enable_ik:
+            ret = self.arm.invK(position, ref_joints=self.arm.joint_pos)
+            if ret["recv"] != "Task_Recieve":
+                print("Inverse kinematics failed:", ret)
+                return 
+
+            pos = ret["data"]["joint1"]
+            self.pub_joint_ik.publish({"header": msg["header"], "position": pos})
+
 
     def joint_callback(self, msg):        
         position = np.frombuffer(msg["position"],dtype=np.float64).tolist()        
@@ -66,6 +79,7 @@ def driver_main(args):
     transfer = ros2.Transfer({"node": "carm_driver" + args.device, 
                               "publishers":[[args.joint_topic, "sensor_msgs/msg/JointState",10],
                                             [args.end_topic, "sensor_msgs/msg/JointState",10],
+                                            [args.joint_cmd_ik_topic, "sensor_msgs/msg/JointState",10],
                                             ],
                               "subscriptions":[[args.joint_cmd_topic, "sensor_msgs/msg/JointState",10],
                                                [args.end_cmd_topic, "sensor_msgs/msg/JointState",10]]})
@@ -82,7 +96,9 @@ def main():
     parser.add_argument("--joint_topic", type=str, default="", help="the joints status topic")
     parser.add_argument("--end_topic", type=str, default="", help="the joints status topic")
     parser.add_argument("--joint_cmd_topic", type=str, default="", help="the joints cmd topic")
+    parser.add_argument("--joint_cmd_ik_topic", type=str, default="", help="the joints cmd ik topic, this means both end_cmd_topic will be transformed with ik")
     parser.add_argument("--end_cmd_topic", type=str, default="", help="the end cmd topic")
+    parser.add_argument("--speed", type=float, default=5.0, help="the speed level")
     
     args = parser.parse_args()
     
@@ -94,6 +110,11 @@ def main():
         args.joint_cmd_topic = "/"+args.device + "/joints_cmd"
     if args.end_cmd_topic == "":
         args.end_cmd_topic = "/"+args.device + "/end_cmd"
+    if args.joint_cmd_ik_topic == "":
+        args.joint_cmd_ik_topic = "/"+args.device + "/joints_cmd_ik"
+        args.__dict__["enable_ik"] = False
+    else:
+        args.__dict__["enable_ik"] = True
     
     if args.cmd == "":
         driver_main(args)
