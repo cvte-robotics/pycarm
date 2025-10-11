@@ -296,7 +296,7 @@ class Carm:
                "data":{"way_point": pos}}
         
         if end_effector >= 0:
-            req["data"]["eeffe_point"] = end_effector
+            req["data"]["grp_point"] = end_effector
 
         return self.request(req)
     
@@ -316,7 +316,7 @@ class Carm:
                "data":{"way_point": pos}}
         
         if end_effector > 0:
-            req["data"]["eeffe_point"] = end_effector
+            req["data"]["grp_point"] = end_effector
 
         return self.request(req)
 
