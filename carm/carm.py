@@ -279,7 +279,7 @@ class Carm:
             joints[i] = self.__clip(v, lower[i], upper[i])
         return joints
     
-    def track_joint(self, pos, end_effector = -1):
+    def track_joint(self, pos, end_effector = None):
         """
         关节轨迹跟踪.
         Args:
@@ -295,12 +295,14 @@ class Carm:
                "point_type":{"space":0},
                "data":{"way_point": pos}}
         
-        if end_effector >= 0:
-            req["data"]["grp_point"] = end_effector
+        if not end_effector is None:
+            #req["data"]["grp_point"] = end_effector
+            tau = (0.1 - end_effector)  * 20
+            self.set_end_effector(end_effector, tau)
 
         return self.request(req)
     
-    def track_pose(self, pos, end_effector = -1):
+    def track_pose(self, pos, end_effector =None):
         """
         笛卡尔轨迹跟踪.
         Args:
@@ -315,9 +317,11 @@ class Carm:
                "point_type":{"space":1},
                "data":{"way_point": pos}}
         
-        if end_effector > 0:
-            req["data"]["grp_point"] = end_effector
-
+        if not end_effector is None:
+            #req["data"]["grp_point"] = end_effector
+            tau = (0.1 - end_effector)  * 20
+            self.set_end_effector(end_effector, tau)
+        
         return self.request(req)
 
     def move_joint(self, pos, tm=-1, sync=True, user=0, tool=0):
@@ -478,10 +482,13 @@ class Carm:
         self.ws.send(json.dumps(msg))
         
     def __cbk_status(self, message):
-        self.state = message
-
         if not "arm" in message:
             return
+            
+        self.state = message
+        
+        if message["errMsg"] != "":
+            print(message["errMsg"] )
         
         arm_json = message["arm"][0]
         if "last_task_key" not in arm_json:
