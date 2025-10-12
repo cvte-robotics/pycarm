@@ -29,7 +29,7 @@ class ArmDriver:
         if type(position) != tuple:
             position = np.frombuffer(msg["position"],dtype=np.float64).tolist()
 
-        if position > 7:
+        if len(position) > 7:
             self.arm.track_pose(position[:7], position[7])
         else:
             self.arm.track_pose(position)
@@ -49,7 +49,7 @@ class ArmDriver:
         if type(position) != tuple:   
             position = np.frombuffer(msg["position"],dtype=np.float64).tolist()  
 
-        if position > 6:
+        if len(position) > 6:
             self.arm.track_joint(position[:6], position[6])
         else:
             self.arm.track_joint(position)      
