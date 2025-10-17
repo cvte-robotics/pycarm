@@ -21,7 +21,7 @@ class Carm:
             "onCarmError": lambda msg: print("Error:", msg)
         }
         self.res_pool  = {}
-        self.task_pool = {}
+        self.task_event = threading.Event()
 
         self.reader = threading.Thread(target=self.__recv_loop, daemon=True).start()
         self.open_ready = threading.Event()
@@ -406,10 +406,8 @@ class Carm:
         return res
         
     def __wait_task(self, task_key):
-        event = threading.Event()
-        self.task_pool[task_key] = {"event":event}
-        event.wait()
-        self.task_pool.pop(task_key)
+        self.task_event= threading.Event()
+        self.task_event.wait()
     
     def move_joint_traj(self, target_traj, gripper_pos = [], stamps = [], is_sync=True):
         if len(stamps) != len(target_traj): # as soon as possible
@@ -491,16 +489,16 @@ class Carm:
             print(message["errMsg"] )
         
         arm_json = message["arm"][0]
-        if "last_task_key" not in arm_json:
+        if "task" not in arm_json:
             return
+        running = arm_json["task"]["exe_flag"]
         
-        task = arm_json["last_task_key"]
-        self.task_pool[task]["event"].set()
+        if not running:
+            self.task_event.set()
         
 
     def __cbk_taskfinish(self, message):
         task = message["task_key"]
-        self.task_pool[task]["event"].set()
         
     def __on_open(self, ws):
         self.open_ready.set()
