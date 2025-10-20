@@ -28,4 +28,10 @@ carm.track_pose(carm.cart_pose)
 carm.move_pose(carm.cart_pose)
 ```
 
+# Version update to pypy
+
+```
+python3 -m build
+python3 -m twine upload --repository pypi dist/*
+```
 
