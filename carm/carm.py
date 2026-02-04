@@ -8,12 +8,6 @@ class Carm:
     def __init__(self, addr = "ws://100.84.147.120:8090"):
         self.state = None
         self.last_msg = None
-        self.ws = websocket.WebSocketApp(
-            addr,  # 测试用的公开WebSocket服务
-            on_open   = lambda ws: self.__on_open(ws),
-            on_close  = lambda ws, code, close_msg: self.__on_close(ws, code, close_msg),
-            on_message= lambda ws, msg: self.__on_message(ws, msg),
-        )
 
         self.ops = {
             "webSendRobotState": lambda msg: self.__cbk_status(msg),
@@ -22,10 +16,17 @@ class Carm:
         }
         self.res_pool  = {}
         self.task_event = threading.Event()
-
-        self.reader = threading.Thread(target=self.__recv_loop, daemon=True).start()
         self.open_ready = threading.Event()
-        self.open_ready.wait()
+
+        while not self.open_ready.wait(1):
+            self.ws = websocket.WebSocketApp(
+                addr,  # 测试用的公开WebSocket服务
+                on_open   = lambda ws: self.__on_open(ws),
+                on_close  = lambda ws, code, close_msg: self.__on_close(ws, code, close_msg),
+                on_message= lambda ws, msg: self.__on_message(ws, msg),
+            )
+            self.reader = threading.Thread(target=self.__recv_loop, daemon=True).start()
+        
         self.limit = self.get_limits()["params"]
 
         self.set_ready()
