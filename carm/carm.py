@@ -255,6 +255,33 @@ class Carm:
         return self.state["arm"][0]["reality"]["torque"]
     
     @property
+    def plan_joint_pos(self):
+        """
+        获取当前关节位置.
+        Returns:
+            list: The joint position of the arm.
+        """
+        return self.state["arm"][0]["plan"]["pose"]
+    
+    @property
+    def plan_joint_vel(self):
+        """
+        获取当前关节速度.
+        Returns:
+            list: The joint velocity of the arm.
+        """
+        return self.state["arm"][0]["plan"]["vel"]
+    
+    @property
+    def plan_joint_tau(self):
+        """
+        获取当前关节力矩.
+        Returns:
+            list: The joint torque of the arm.
+        """
+        return self.state["arm"][0]["plan"]["torque"]
+    
+    @property
     def cart_pose(self):
         """
         获取当前笛卡尔位置.
@@ -262,6 +289,16 @@ class Carm:
             list: The cartesian position of the arm.
         """
         return self.state["arm"][0]["pose"]
+    
+
+    @property
+    def plan_cart_pose(self):
+        """
+        获取当前规划的笛卡尔位置.
+        Returns:
+            list: The cartesian position of the arm.
+        """
+        return self.forwardK(self.plan_joint_pos)
     
     @property
     def gripper_state(self):
@@ -464,6 +501,42 @@ class Carm:
                              "task_id":"inverse",
                              "arm_index":0,
                              "data":data})
+
+    def forwardK(self, joint_pos, user=0, tool=0):
+        """
+        正解
+        Args:
+            joint_pos (list): The joint position to move.
+            user (int, optional): The user index.
+            tool (int, optional): The tool index.
+        Returns:
+            dict: The response from the arm.
+        """
+        is_list = True
+        if not type(joint_pos[0]) is list:
+            joint_pos = [joint_pos, ]
+            is_list = False
+        data = {"user":user,"tool":tool,"point_cnt":len(joint_pos)}
+        for i in range(len(joint_pos)):
+            data[f"joint{i+1}"] = joint_pos[i]
+        ret = self.request({"command":"getKinematics",
+                             "task_id":"forward",
+                             "arm_index":0,
+                             "data":data})
+        
+        try:
+            if ret["recv"] == "Task_Recieve":
+                if is_list:
+                    points = []
+                    for i in range(len(joint_pos)):
+                        points.append(ret["data"][f"point{i+1}"])
+                    return points
+                else:
+                    return ret["data"]["point1"]
+            else:
+                return None
+        except:
+            return None
 
     def request(self, req):
         event = threading.Event()
