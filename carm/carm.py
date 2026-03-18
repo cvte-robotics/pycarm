@@ -132,6 +132,56 @@ class Carm:
 
     # -------------------- 末端执行器（夹爪）属性 --------------------
     @property
+    def end_effector_state(self):
+        """夹爪状态（-1 未连接/无夹爪，0 未使能，1 正常）"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        if not eeff.get("is_connect", False):
+            return -1
+        return eeff.get("eeff_state", -1)
+
+    @property
+    def end_effector_pos(self):
+        """实际夹爪位置（单位：米）"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        pos = eeff.get("eeff_pos", [])
+        return pos
+
+    @property
+    def end_effector_vel(self):
+        """实际夹爪速度"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        vel = eeff.get("eeff_vel", [])
+        return vel
+
+    @property
+    def end_effector_tau(self):
+        """实际夹爪力矩"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        tau = eeff.get("eeff_tau", [])
+        return tau
+
+    @property
+    def plan_end_effector_pos(self):
+        """规划夹爪位置"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        pos = eeff.get("eeff_plan_pos", [])
+        return pos
+
+    @property
+    def plan_end_effector_vel(self):
+        """规划夹爪速度"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        vel = eeff.get("eeff_plan_vel", [])
+        return vel
+
+    @property
+    def plan_end_effector_tau(self):
+        """规划夹爪力矩"""
+        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        tau = eeff.get("eeff_plan_tau", [])
+        return tau
+
+    @property
     def gripper_state(self):
         """夹爪状态（-1 未连接/无夹爪，0 未使能，1 正常）"""
         eeff = self.state["arm"][self.arm_index].get("eeff", {})
@@ -145,13 +195,6 @@ class Carm:
         eeff = self.state["arm"][self.arm_index].get("eeff", {})
         pos = eeff.get("eeff_pos", [])
         return pos[0] if pos else 0.0
-
-    @property
-    def gripper_vel(self):
-        """实际夹爪速度"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        vel = eeff.get("eeff_vel", [])
-        return vel[0] if vel else 0.0
 
     @property
     def gripper_tau(self):
@@ -168,13 +211,6 @@ class Carm:
         return pos[0] if pos else 0.0
 
     @property
-    def plan_gripper_vel(self):
-        """规划夹爪速度"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        vel = eeff.get("eeff_plan_vel", [])
-        return vel[0] if vel else 0.0
-
-    @property
     def plan_gripper_tau(self):
         """规划夹爪力矩"""
         eeff = self.state["arm"][self.arm_index].get("eeff", {})
@@ -182,18 +218,84 @@ class Carm:
         return tau[0] if tau else 0.0
 
     # -------------------- 控制命令 --------------------
-    def set_ready(self):
-        """将机械臂设置为就绪状态（错误清除、伺服上使能、切换到位置模式）"""
+    def set_ready(self, timeout_ms=3000):
+        """
+        将机械臂设置为就绪状态（错误清除、伺服上使能、切换到位置模式）。
+        :param timeout_ms: 超时时间（毫秒），默认 3000ms
+        :return: True 表示就绪成功，False 表示失败
+        """
+        # 初始等待 0.1 秒，对应 C++ 的 usleep(100000)
+        time.sleep(0.1)
+
+        # 确保至少收到一次状态
         while self.state is None:
             time.sleep(0.1)
+
         arm = self.state["arm"][self.arm_index]
-        if arm["fsm_state"] == "POSITION" or arm["fsm_state"] == "MIT":
-            return True
-        if arm["fsm_state"] == "ERROR":
+        servo = arm.get("servo", 0)
+        fsm_state = arm.get("fsm_state", "")
+        state_val = arm.get("state", 0)  # -1 错误，0 空闲，1 运行，2 拖动
+
+        # 检查是否已经就绪
+        if (servo == 1 and fsm_state == "POSITION" and state_val != -1 and self.is_connected()):
+            # 已就绪，执行清理和恢复（与 C++ 一致）
             self.clean_carm_error()
-        if arm["fsm_state"] == "IDLE":
+            self.task_event.set()
+            self.recover()
+            self.limit = self.get_limits()["params"]  # 更新配置
+            return True
+
+        # 辅助函数：检查是否满足就绪条件
+        def is_ready():
+            if self.state is None:
+                return False
+            arm = self.state["arm"][self.arm_index]
+            return (arm.get("servo", 0) == 1 and
+                    arm.get("fsm_state", "") == "POSITION" and
+                    arm.get("state", 0) != -1 and
+                    self.is_connected())
+        # 带超时等待
+        start_time = time.time()
+        deadline = start_time + timeout_ms / 1000.0
+
+        # 第一步：清除错误
+        if state_val == -1:
+            self.clean_carm_error()
+            while time.time() < deadline:
+                time.sleep(0.1)
+                # 重新获取状态
+                if self.state and self.state["arm"][self.arm_index].get("state", 0) != -1:
+                    break
+                self.clean_carm_error()
+
+        # 第二步：伺服使能
+        if not servo:
             self.set_servo_enable(True)
-        return self.set_control_mode(1)
+            while time.time() < deadline:
+                time.sleep(0.1)
+                if self.state and self.state["arm"][self.arm_index].get("servo", 0) == 1:
+                    break
+                self.set_servo_enable(True)
+
+        # 第三步：切换到位置模式
+        if fsm_state != "POSITION":
+            # C++ 中此处调用 set_control_mode(0) 可能是笔误，实际应设为位置模式 (1)
+            self.set_control_mode(1)
+            while time.time() < deadline:
+                time.sleep(0.1)
+                if self.state and self.state["arm"][self.arm_index].get("fsm_state", "") == "POSITION":
+                    break
+                self.set_control_mode(1)
+
+        # 最终检查
+        if is_ready():
+            self.clean_carm_error()
+            self.recover()
+            self.task_event.set()
+            self.limit = self.get_limits()["params"]
+            return True
+        else:
+            return False
 
     def set_servo_enable(self, enable=True):
         """设置伺服使能"""
@@ -210,22 +312,71 @@ class Carm:
             "arm_index": self.arm_index,
             "mode": mode
         })
+    
+    def set_end_effector(self, dof, pos, vel, tau):
+        """
+        设置末端执行器（夹爪）的位置、速度、力矩，指定自由度 dof。
+        输入可以是单个数值或列表，长度不足 dof 则补零，超出则截断。
+        :param dof: 末端执行器自由度（整数）
+        :param pos: 位置值或列表（单位：米）
+        :param vel: 速度值或列表（单位：m/s)
+        :param tau: 力矩值或列表（单位：N·m)
+        :return: 请求响应
+        """
+        def to_dof_list(val, default_val=0.0):
+            if val is None:
+                return [default_val] * dof
+            if isinstance(val, (int, float)):
+                # 单个数值，转为列表，然后补零或截断
+                lst = [float(val)]
+            else:
+                lst = list(val)
+            # 调整长度
+            if len(lst) < dof:
+                lst += [default_val] * (dof - len(lst))
+            else:
+                lst = lst[:dof]
+            return lst
 
-    def set_end_effector(self, pos, tau):
-        """设置末端执行器（夹爪）的位置和力矩（兼容旧接口）"""
+        pos_list = to_dof_list(pos)
+        vel_list = to_dof_list(vel)
+        tau_list = to_dof_list(tau)
+
         return self.request({
             "command": "setEffectorCtr",
             "arm_index": self.arm_index,
-            "pos": pos,
-            "tau": tau
+            "pos": pos_list,
+            "vel": vel_list,
+            "tau": tau_list
         })
 
     def set_gripper(self, pos, tau=10):
         """设置夹爪位置和力矩（单位：米，牛）"""
         pos = self.__clip(pos, 0, 0.08)
         tau = self.__clip(tau, 0, 100)
-        return self.set_end_effector(pos, tau)
+        return self.set_end_effector(1, [pos], [0.0], [tau])
 
+    def set_tool_index(self, index):
+        """
+        设置当前工具号。
+        :param index: 工具索引（整数，通常从 0 开始）
+        :return: 请求响应，可检查 recv 字段是否为 "Task_Recieve"
+        """
+        return self.request({
+            "command": "setToolData",
+            "operation": "change",
+            "index": index,
+            "arm_index": self.arm_index
+        })
+
+    @property
+    def tool_index(self):
+        """
+        获取当前工具号。
+        :return: 当前工具索引（整数），若状态未更新或无此字段返回 0
+        """
+        return self.state["arm"][self.arm_index].get("tool", 0)
+        
     def get_tool_coordinate(self, tool):
         """获取指定工具的坐标系（工具末端相对法兰的位姿）"""
         return self.request({
@@ -291,40 +442,50 @@ class Carm:
             "response_level": response_level
         })
 
-    def set_debug(self, flag):
-        """设置调试模式（模拟运行）"""
-        return self.request({
-            "command": "setDebugMode",
-            "arm_index": self.arm_index,
-            "trigger": flag
-        })
-
     # -------------------- 运动接口 --------------------
     def track_joint(self, pos, end_effector=None, tau=20):
         """关节空间轨迹跟踪（周期性发送目标关节位置）"""
         pos = self.__clip_joints(pos)
-        req = {
-            "command": "trajectoryTrackingTasks",
-            "task_id": "TASK_TRACKING",
-            "arm_index": self.arm_index,
-            "point_type": {"space": 0},
-            "data": {"way_point": pos}
-        }
         if end_effector is not None:
-            self.set_end_effector(end_effector, tau)
+            end_effector = self.__clip(end_effector, 0, 0.08)
+            req = {
+                "command": "trajectoryTrackingTasks",
+                "task_id": "TASK_TRACKING",
+                "arm_index": self.arm_index,
+                "point_type": {"space": 0},
+                "data": {"way_point": pos,
+                         "grp_point": end_effector}
+            }
+        else:
+            req = {
+                "command": "trajectoryTrackingTasks",
+                "task_id": "TASK_TRACKING",
+                "arm_index": self.arm_index,
+                "point_type": {"space": 0},
+                "data": {"way_point": pos}
+            }
         return self.request(req)
 
     def track_pose(self, pos, end_effector=None, tau=20):
         """笛卡尔空间轨迹跟踪（周期性发送目标位姿）"""
-        req = {
-            "command": "trajectoryTrackingTasks",
-            "task_id": "TASK_TRACKING",
-            "arm_index": self.arm_index,
-            "point_type": {"space": 1},
-            "data": {"way_point": pos}
-        }
         if end_effector is not None:
-            self.set_end_effector(end_effector, tau)
+            end_effector = self.__clip(end_effector, 0, 0.08)
+            req = {
+                "command": "trajectoryTrackingTasks",
+                "task_id": "TASK_TRACKING",
+                "arm_index": self.arm_index,
+                "point_type": {"space": 1},
+                "data": {"way_point": pos,
+                         "grp_point": end_effector}
+            }
+        else:
+            req = {
+                "command": "trajectoryTrackingTasks",
+                "task_id": "TASK_TRACKING",
+                "arm_index": self.arm_index,
+                "point_type": {"space": 1},
+                "data": {"way_point": pos}
+            }
         return self.request(req)
 
     def move_joint(self, pos, tm=-1, sync=True, tool=0):
@@ -356,7 +517,7 @@ class Carm:
             self.__wait_task(res["task_key"])
         return res
 
-    def move_line_pose(self, pos, speed=100, sync=True, tool=0):
+    def move_line_pose(self, pos, sync=True, tool=0):
         """笛卡尔空间直线运动（TASK_MOVL 空间标志为 1）"""
         # 注意：这里传入的是笛卡尔位姿，point_type=1，直接发送位姿
         res = self.request({
@@ -365,13 +526,13 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 1},
-            "data": {"tool": tool, "point": pos, "speed": speed}
+            "data": {"tool": tool, "point": pos, "speed": 100}
         })
         if sync and res["recv"] == "Task_Recieve":
             self.__wait_task(res["task_key"])
         return res
 
-    def move_line_joint(self, pos, speed=100, sync=True, tool=0):
+    def move_line_joint(self, pos, sync=True, tool=0):
         """关节空间直线运动（TASK_MOVL 空间标志为 0）"""
         pos = self.__clip_joints(pos)
         res = self.request({
@@ -380,7 +541,7 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 0},
-            "data": {"tool": tool, "point": pos, "speed": speed}
+            "data": {"tool": tool, "point": pos, "speed": 100}
         })
         if sync and res["recv"] == "Task_Recieve":
             self.__wait_task(res["task_key"])
@@ -458,16 +619,6 @@ class Carm:
         if res.get("recv") == "Task_Recieve" and "teach_list" in res:
             return res["teach_list"]
         return []
-
-    # -------------------- 冗余关节力矩 --------------------
-    def set_redundancy_tau(self, redundancy_tau, end_effector=None):
-        """设置冗余关节力矩（用于力反馈遥操作）"""
-        return self.request({
-            "command": "setRedundancyTau",
-            "arm_index": self.arm_index,
-            "is_master": True,
-            "redundancy_tau": redundancy_tau
-        })
 
     # -------------------- 运动学 --------------------
     def inverse_kine(self, cart_pose, ref_joints, tool=0):
