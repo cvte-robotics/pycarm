@@ -6,7 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "carm"
 version = "0.1.20260204"
 authors = [
-    {name = "Yong Zhao", email = "zhaoyong11933@cvte.com"},
+    {name = "Yujun Huang", email = "huangyujun@cvte.com"},
+    {name = "Yong Zhao", email = "zhaoyong11933@cvte.com"}
+    
 ]
 description = "Python interface for cvte arm."
 readme = "README.md"
