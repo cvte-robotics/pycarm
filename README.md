@@ -35,7 +35,6 @@ python3 -m build
 python3 -m twine upload --repository pypi dist/*
 ```
 
-
 # CARM Python SDK
 
 本项目提供与 CARM 机械臂控制器通信的 Python 接口，基于 WebSocket 协议，封装了常用的控制命令和状态查询。支持单臂操作，可与 C++ SDK 功能对齐。
@@ -84,7 +83,7 @@ robot.set_ready()
 print("Joint positions:", robot.joint_pos)
 
 # 移动到目标关节位置（阻塞等待完成）
-robot.move_joint([0.1, -0.2, 0.3, 0.0, 0.0, 0.0], sync=True)
+robot.move_joint([0.1, -0.2, 0.3, 0.0, 0.0, 0.0], is_sync=True)
 
 # 关闭连接
 robot.disconnect()
@@ -364,40 +363,40 @@ target_pose = [0.5, 0.0, 0.3, 0.707, 0.0, 0.707, 0.0]
 robot.track_pose(target_pose, end_effector=0.02)
 ```
 
-#### `move_joint(pos, tm=-1, sync=True, tool=0)`
+#### `move_joint(pos, tm=-1, is_sync=True, tool=0)`
 
 * 描述：关节空间点到点运动（TASK_MOVJ）。
 * 参数：
   * `pos` (list): 目标关节位置。
   * `tm` (float): 期望运动时间（-1 表示自动）。
-  * `sync` (bool): 是否阻塞等待完成。
+  * is_sync (bool): 是否阻塞等待完成。
   * `tool` (int): 工具号。
 
 **python**
 
 ```
-res = robot.move_joint([0.2, -0.3, 0.4, 0, 0, 0], sync=True)
+res = robot.move_joint([0.2, -0.3, 0.4, 0, 0, 0], is_sync=True)
 ```
 
-#### `move_pose(pos, tm=-1, sync=True, tool=0)`
+#### `move_pose(pos, tm=-1, is_sync=True, tool=0)`
 
 * 描述：笛卡尔空间点到点运动。
 
-#### `move_line_pose(pos, sync=True, tool=0)`
+#### `move_line_pose(pos, is_sync=True, tool=0)`
 
 * 描述：笛卡尔直线运动（TASK_MOVL）。
 
 **python**
 
 ```
-robot.move_line_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], sync=True)
+robot.move_line_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], is_sync=True)
 ```
 
-#### `move_line_joint(pos, sync=True, tool=0)`
+#### `move_line_joint(pos, is_sync=True, tool=0)`
 
 * 描述：关节空间直线运动。
 
-#### `move_flow_pose(target_pos, line_theta_weight=0.5, accuracy=0.0001, sync=True, tool=0)`
+#### `move_flow_pose(target_pos, line_theta_weight=0.5, accuracy=0.0001, is_sync=True, tool=0)`
 
 * 描述：笛卡尔雅可比迭代运动（TASK_FLOW）。
 * 参数：
@@ -438,14 +437,14 @@ robot.trajectory_teach(True)
 robot.trajectory_teach(False, "my_traj_001")
 ```
 
-#### `trajectory_recorder(name)`
+#### `trajectory_recorder(name, is_sync=True)`
 
 * 描述：复现指定名称的轨迹。
 
 **python**
 
 ```
-robot.trajectory_recorder("my_traj_001")
+robot.trajectory_recorder("my_traj_001", is_sync=True)
 ```
 
 #### `check_teach()`
@@ -533,7 +532,7 @@ robot.on_task_finish(task_done)
 
 ## 注意事项
 
-* 所有请求都是同步阻塞的，除非 `sync=False` 的运动接口。
+* 所有请求都是同步阻塞的，除非 `is_sync=False` 的运动接口。
 * 状态属性（如 `joint_pos`）需在连接并收到状态更新后才能使用。
 * 某些高级功能（如 PVT 轨迹）尚未实现，但占位已预留。
 
