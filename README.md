@@ -67,10 +67,10 @@ pip install websocket-client
 **python**
 
 ```
-from carm_sdk import Carm
+from carm import Carm
 
 # 连接到机械臂（默认 IP: 10.42.0.101:8090）
-robot = Carm()
+robot = Carm("10.42.0.101")
 
 # 等待连接成功，检查状态
 if robot.is_connected():
@@ -181,6 +181,9 @@ print("Joint positions:", robot.joint_pos)
 * `gripper_state`: 夹爪状态（简化，-1/0/1）
 * `gripper_pos` / `tau`: 夹爪位置和力矩（单值）
 * `plan_gripper_pos` / `tau`: 规划夹爪值
+* `hand_state`: 灵巧手状态
+* `hand_pos` / `vel` / `tau`: 灵巧手实际位置/速度/力矩（列表）
+* `plan_hand_pos` / `vel` / `tau`: 规划灵巧手值
 
 **python**
 
@@ -263,7 +266,21 @@ robot.set_end_effector(1, pos=0.02, vel=0.0, tau=5.0)
 ```
 robot.set_gripper(0.03, tau=8)
 ```
+#### `set_hand(pos, tau, vel)`
 
+* 描述：设置灵巧手位置、力矩和速度。
+* 参数：
+  * `pos` (float/list): 灵巧手位置或列表。
+  * `tau` (float/list): 灵巧手力矩或列表。
+  * `vel` (float/list): 灵巧手速度或列表。
+* 说明：输入自动对齐到指定自由度，不足补零，超出截断。
+
+**python**
+
+```python
+# 设置 3 个自由度的灵巧手
+robot.set_hand([0.1, 0.2, 0.3], tau=[5.0, 5.0, 5.0], vel=[0.1, 0.1, 0.1])
+```
 #### `set_tool_index(index)`
 
 * 描述：切换当前工具号。

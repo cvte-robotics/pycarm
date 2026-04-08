@@ -9,32 +9,30 @@ class Carm:
     def __init__(self, addr="10.42.0.101", arm_index=0):
         self.state = None
         self.last_msg = None
+        self.ws = None
         self.arm_index = arm_index
         self.addr = addr
         self.port = 8090
+        self._retry_delay = 1.0
+        self._max_delay = 10.0
 
         self.ops = {
             "webSendRobotState": lambda msg: self.__cbk_status(msg),
             "taskFinished": lambda msg: self.__cbk_taskfinish(msg),
-            "onCarmError": lambda msg: print("Error:", msg)
+            "onCarmError": lambda msg: self.__cbk_error(msg)
         }
         self.res_pool = {}
-        self.task_event = threading.Event()
+        self.task_pool = {}
         self.open_ready = threading.Event()
+        self._reconnect_event = threading.Event()
+        self.limit = None
+        self._running = True
+        self._create_connection() # 确保第一次的 ws 对象先创建出来
+        self.reader = threading.Thread(target=self.__recv_loop, daemon=True)
+        self.reader.start()
 
-        # 自动连接
-        while not self.open_ready.wait(1):
-            self._create_connection()
-        try:
-            # Wait for connection before getting limits, with timeout
-            if self.open_ready.wait(1.0):
-                self.limit = self.get_limits()["params"]
-            else:
-                self.limit = None
-                print(f"Warning: Failed to connect to {self.addr}:{self.port} on init")
-        except Exception as e:
-            self.limit = None
-            print(f"Error on init connection: {e}")
+    def __del__(self):
+        self.disconnect()
 
     def _create_connection(self):
         """创建 WebSocket 连接（内部使用）"""
@@ -44,7 +42,7 @@ class Carm:
             on_close=lambda ws, code, close_msg: self.__on_close(ws, code, close_msg),
             on_message=lambda ws, msg: self.__on_message(ws, msg),
         )
-        self.reader = threading.Thread(target=self.__recv_loop, daemon=True).start()
+        print(f"Connecting to {self.addr}:{self.port}...")
 
     # -------------------- 连接管理 --------------------
     def connect(self, addr=None, port=None, timeout=1):
@@ -59,29 +57,50 @@ class Carm:
             self.addr = addr
         if port:
             self.port = port
-        self.open_ready.clear()
-        
-        # Close existing connection if any
-        if hasattr(self, 'ws') and self.ws:
-            try:
-                self.ws.close()
-            except:
-                pass
-                
+        self.disconnect()
+        self._running = True
+        self._retry_delay = 1.0
+        self._reconnect_event.clear()
         self._create_connection()
+        self.reader = threading.Thread(target=self.__recv_loop, daemon=True)
+        self.reader.start()
         return self.open_ready.wait(timeout)
 
     def disconnect(self):
-        """断开与机械臂控制器的连接"""
-        if self.ws:
-            self.ws.close()
+        """断开与机械臂控制器的连接，绝对安全地释放 ws 及停止后台线程"""
+        if not getattr(self, '_running', False) and getattr(self, 'reader', None) is None:
+            return 
+
+        self._running = False
+        self._reconnect_event.set() # 唤醒可能在沉睡（等待重连 delay）的旧线程
+        
+        # 暴力摧毁底层 socket 使得当前卡在 run_forever 的 receive 立即爆错抛出
+        self.__force_close_ws_socket(getattr(self, 'ws', None))
+        self.__abort_all_tasks()
+        
+        old_reader = getattr(self, 'reader', None)
+        self.reader = None  # 剥离当前线程引用，通知旧线程必须退出
+        
+        # 必须死等该旧线程正式退出返回（杜绝它在任何地方死灰复燃产生僵尸分身）
+        if old_reader and old_reader.is_alive() and old_reader is not threading.current_thread():
+            old_reader.join() # 无 timeout，绝对保证断联后后台干净
+            
         self.open_ready.clear()
+        self.ws = None # 完全切断残余连接对象引用
+        print("Disconnected cleanly.")
 
     def is_connected(self):
         """检查当前是否已连接"""
         return self.open_ready.is_set()
 
     # -------------------- 属性（状态获取） --------------------
+    @property
+    def _arm_state(self):
+        """内部方法：安全获取当前手臂的状态字典"""
+        if not self.state or "arm" not in self.state or len(self.state["arm"]) <= self.arm_index:
+            return {}
+        return self.state["arm"][self.arm_index]
+
     @property
     def version(self):
         """获取控制器软件版本"""
@@ -101,58 +120,58 @@ class Carm:
     @property
     def joint_pos(self):
         """实际关节位置 (rad)"""
-        return self.state["arm"][self.arm_index]["reality"]["pose"]
+        return self._arm_state.get("reality", {}).get("pose", [])
 
     @property
     def joint_vel(self):
         """实际关节速度 (rad/s)"""
-        return self.state["arm"][self.arm_index]["reality"]["vel"]
+        return self._arm_state.get("reality", {}).get("vel", [])
 
     @property
     def joint_tau(self):
         """实际关节力矩 (N·m)"""
-        return self.state["arm"][self.arm_index]["reality"]["torque"]
+        return self._arm_state.get("reality", {}).get("torque", [])
 
     @property
     def plan_joint_pos(self):
         """规划关节位置 (rad)"""
-        return self.state["arm"][self.arm_index]["plan"]["pose"]
+        return self._arm_state.get("plan", {}).get("pose", [])
 
     @property
     def plan_joint_vel(self):
         """规划关节速度 (rad/s)"""
-        return self.state["arm"][self.arm_index]["plan"]["vel"]
+        return self._arm_state.get("plan", {}).get("vel", [])
 
     @property
     def plan_joint_tau(self):
         """规划关节力矩 (N·m)"""
-        return self.state["arm"][self.arm_index]["plan"]["torque"]
+        return self._arm_state.get("plan", {}).get("torque", [])
 
     @property
     def cart_pose(self):
         """当前实际笛卡尔位姿 (x, y, z, qx, qy, qz, qw)"""
-        return self.state["arm"][self.arm_index]["pose"]
+        return self._arm_state.get("pose", [])
 
     @property
     def plan_cart_pose(self):
         """当前规划笛卡尔位姿 (x, y, z, qx, qy, qz, qw)"""
-        return self.state["arm"][self.arm_index]["plan"]["cart_pose"]
+        return self._arm_state.get("plan", {}).get("cart_pose", [])
 
     @property
     def joint_external_tau(self):
         """关节外力矩 (tau1~tauN)"""
-        return self.state["arm"][self.arm_index].get("joint_external_tau", [])
+        return self._arm_state.get("joint_external_tau", [])
 
     @property
     def cart_external_force(self):
         """笛卡尔外力 (fx, fy, fz, tx, ty, tz)"""
-        return self.state["arm"][self.arm_index].get("cart_external_force", [])
+        return self._arm_state.get("cart_external_force", [])
 
     # -------------------- 末端执行器（夹爪）属性 --------------------
     @property
     def end_effector_state(self):
         """末端执行器状态（-1 未连接/无夹爪，0 未使能，1 正常）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        eeff = self._arm_state.get("eeff", {})
         if not eeff.get("is_connect", False):
             return -1
         return eeff.get("eeff_state", -1)
@@ -160,80 +179,138 @@ class Carm:
     @property
     def end_effector_pos(self):
         """实际末端执行器位置（单位：m or rad）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        pos = eeff.get("eeff_pos", [])
-        return pos
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_pos", [])
 
     @property
     def end_effector_vel(self):
         """实际末端执行器速度（单位：m/s or rad/s）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        vel = eeff.get("eeff_vel", [])
-        return vel
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_vel", [])
 
     @property
     def end_effector_tau(self):
         """实际末端执行器力矩（单位：N）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        tau = eeff.get("eeff_tau", [])
-        return tau
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_tau", [])
 
     @property
     def plan_end_effector_pos(self):
         """规划末端执行器位置（单位：m or rad）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        pos = eeff.get("eeff_plan_pos", [])
-        return pos
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_plan_pos", [])
 
     @property
     def plan_end_effector_vel(self):
         """规划末端执行器速度（单位：m/s or rad/s）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        vel = eeff.get("eeff_plan_vel", [])
-        return vel
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_plan_vel", [])
 
     @property
     def plan_end_effector_tau(self):
         """规划末端执行器力矩（单位：N）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        tau = eeff.get("eeff_plan_tau", [])
-        return tau
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_plan_tau", [])
 
     @property
     def gripper_state(self):
         """夹爪状态（-1 未连接/无夹爪，0 未使能，1 正常）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
-        if not eeff.get("is_connect", False):
+        eeff = self._arm_state.get("eeff", {})
+        if not eeff.get("is_connect", False) or eeff.get("eeff_type") != "gripper":
             return -1
         return eeff.get("eeff_state", -1)
 
     @property
     def gripper_pos(self):
         """实际夹爪位置（单位：m）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "gripper":
+            return 0.0
         pos = eeff.get("eeff_pos", [])
         return pos[0] if pos else 0.0
 
     @property
     def gripper_tau(self):
         """实际夹爪力矩（单位：N）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "gripper":
+            return 0.0
         tau = eeff.get("eeff_tau", [])
         return tau[0] if tau else 0.0
 
     @property
     def plan_gripper_pos(self):
         """规划夹爪位置（单位：m）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "gripper":
+            return 0.0
         pos = eeff.get("eeff_plan_pos", [])
         return pos[0] if pos else 0.0
 
     @property
     def plan_gripper_tau(self):
         """规划夹爪力矩（单位：N）"""
-        eeff = self.state["arm"][self.arm_index].get("eeff", {})
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "gripper":
+            return 0.0
         tau = eeff.get("eeff_plan_tau", [])
         return tau[0] if tau else 0.0
+
+    @property
+    def hand_state(self):
+        """灵巧手状态（-1 未连接/无灵巧手，0 未使能，1 正常）"""
+        eeff = self._arm_state.get("eeff", {})
+        if not eeff.get("is_connect", False) or eeff.get("eeff_type") != "hand":
+            return -1
+        return eeff.get("eeff_state", -1)
+
+    @property
+    def hand_pos(self):
+        """实际灵巧手位置（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_pos", [])
+
+    @property
+    def hand_vel(self):
+        """实际灵巧手速度（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_vel", [])
+
+    @property
+    def hand_tau(self):
+        """实际灵巧手力矩（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_tau", [])
+
+    @property
+    def plan_hand_pos(self):
+        """规划灵巧手位置（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_plan_pos", [])
+
+    @property
+    def plan_hand_vel(self):
+        """规划灵巧手速度（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_plan_vel", [])
+
+    @property
+    def plan_hand_tau(self):
+        """规划灵巧手力矩（列表）"""
+        eeff = self._arm_state.get("eeff", {})
+        if eeff.get("eeff_type") != "hand":
+            return []
+        return eeff.get("eeff_plan_tau", [])
 
     # -------------------- 控制命令 --------------------
     def set_ready(self, timeout_ms=3000):
@@ -246,11 +323,21 @@ class Carm:
         time.sleep(0.1)
         print("Setting arm ready...")
 
-        # 确保至少收到一次状态
-        while self.state is None:
+        start_time = time.time()
+        deadline = start_time + timeout_ms / 1000.0
+
+        # 确保至少收到一次状态，带超时
+        while not self._arm_state:
+            if time.time() > deadline:
+                print("Error: Timeout waiting for initial arm state")
+                return False
             time.sleep(0.1)
 
-        arm = self.state["arm"][self.arm_index]
+        if not self._running or not self.is_connected():
+            print("Error: Disconnected or interrupted while waiting for initial arm state")
+            return False
+        
+        arm = self._arm_state
         servo = arm.get("servo", 0)
         fsm_state = arm.get("fsm_state", "")
         state_val = arm.get("state", 0)  # -1 错误，0 空闲，1 运行，2 拖动
@@ -259,23 +346,24 @@ class Carm:
         if (servo == 1 and fsm_state == "POSITION" and state_val != -1 and self.is_connected()):
             # 已就绪，执行清理和恢复（与 C++ 一致）
             self.clean_carm_error()
-            self.task_event.set()
+            self.__abort_all_tasks()  # 连接异常时利用安全中断机制，防止死锁
             self.recover()
             self.limit = self.get_limits()["params"]  # 更新配置
             return True
 
         # 辅助函数：检查是否满足就绪条件
         def is_ready():
-            if self.state is None:
+            arm = self._arm_state
+            if not arm:
                 return False
-            arm = self.state["arm"][self.arm_index]
             return (arm.get("servo", 0) == 1 and
                     arm.get("fsm_state", "") == "POSITION" and
                     arm.get("state", 0) != -1 and
                     self.is_connected())
         # 带超时等待
-        start_time = time.time()
-        deadline = start_time + timeout_ms / 1000.0
+        if 'start_time' not in locals():
+            start_time = time.time()
+            deadline = start_time + timeout_ms / 1000.0
 
         self.clean_carm_error()
         # 第一步：清除错误
@@ -284,7 +372,7 @@ class Carm:
             while time.time() < deadline:
                 time.sleep(0.1)
                 # 重新获取状态
-                if self.state and self.state["arm"][self.arm_index].get("state", 0) != -1:
+                if self._arm_state.get("state", 0) != -1:
                     break
                 self.clean_carm_error()
 
@@ -293,7 +381,7 @@ class Carm:
             self.set_servo_enable(True)
             while time.time() < deadline:
                 time.sleep(0.1)
-                if self.state and self.state["arm"][self.arm_index].get("servo", 0) == 1:
+                if self._arm_state.get("servo", 0) == 1:
                     break
                 self.set_servo_enable(True)
 
@@ -303,17 +391,17 @@ class Carm:
             self.set_control_mode(1)
             while time.time() < deadline:
                 time.sleep(0.1)
-                if self.state and self.state["arm"][self.arm_index].get("fsm_state", "") == "POSITION":
+                if self._arm_state.get("fsm_state", "") == "POSITION":
                     break
                 self.set_control_mode(1)
 
         # 最终检查
-        arm = self.state["arm"][self.arm_index]
+        arm = self._arm_state
         print(f"Final arm state: servo={arm.get('servo', 0)}, fsm_state={arm.get('fsm_state', '')}, state={arm.get('state', 0)}")
         if is_ready():
             self.clean_carm_error()
+            self.__abort_all_tasks()  # 利用安全中断机制防止死锁
             self.recover()
-            self.task_event.set()
             self.limit = self.get_limits()["params"]
             return True
         else:
@@ -391,6 +479,24 @@ class Carm:
         tau = self.__clip(tau, 0, 100)
         return self.set_end_effector(1, [pos], [0.0], [tau])
 
+    def set_hand(self, pos, tau, vel):
+        """
+        设置灵巧手位置、力矩和速度
+        :param pos: 灵巧手位置或列表
+        :param tau: 灵巧手力矩或列表
+        :param vel: 灵巧手速度或列表
+        :return: 请求响应
+        """
+        if not self.__check_input_valid(pos) or not self.__check_input_valid(tau) or not self.__check_input_valid(vel):
+             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+        dof = max(len(pos) if isinstance(pos, list) else 0,
+                  len(tau) if isinstance(tau, list) else 0,
+                  len(vel) if isinstance(vel, list) else 0)
+        if dof == 0 or len(tau)!= dof or len(vel)!= dof:
+            print(f"Error: set_hand dof is zero, invalid input.")
+            return {'recv': 'Task_Refuse', 'errMsg': 'Invalid input for hand control'}
+        return self.set_end_effector(dof, pos, vel, tau)
+
     def set_tool_index(self, index):
         """
         设置当前工具号。
@@ -412,7 +518,7 @@ class Carm:
         获取当前工具号。
         :return: 当前工具索引（整数），若状态未更新或无此字段返回 0
         """
-        return self.state["arm"][self.arm_index].get("tool", 0)
+        return self._arm_state.get("tool", 0)
         
     def get_tool_coordinate(self, tool):
         """获取指定工具的坐标系（工具末端相对法兰的位姿）"""
@@ -499,7 +605,7 @@ class Carm:
         })
 
     # -------------------- 运动接口 --------------------
-    def track_joint(self, pos, end_effector=None, tau=20):
+    def track_joint(self, pos, end_effector=None):
         """
         关节空间轨迹跟踪（周期性发送目标关节位置）
         :param pos: 目标关节位置
@@ -520,37 +626,38 @@ class Carm:
             end_effector = self.__clip(end_effector, 0, 0.08)
             req["data"]["grp_point"] = end_effector
             
-        return self.request(req)
+        return self.send_only(req)
 
-    def track_pose(self, pos, end_effector=None, tau=20):
+    def track_pose(self, pos, end_effector=None):
         """
         笛卡尔空间轨迹跟踪（周期性发送目标位姿）
         :param pos: 目标笛卡尔位姿 [x, y, z, qx, qy, qz, qw]
         :param end_effector: 夹爪位置（单位：m）
         :param tau: 夹爪力矩（单位：N）
         """
-        if not self.__check_input_valid(pos):
+        _pos = list(pos)
+        if not self.__check_input_valid(_pos):
              return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         
         # Normalize quaternion for track_pose
-        if isinstance(pos, list) and len(pos) >= 7:
-            norm = sum(x*x for x in pos[3:7])
+        if isinstance(_pos, list) and len(_pos) >= 7:
+            norm = sum(x*x for x in _pos[3:7])
             if abs(norm - 1.0) > 1e-4 and norm > 0:
                 scale = 1.0 / math.sqrt(norm)
                 for i in range(3, 7):
-                    pos[i] *= scale
+                    _pos[i] *= scale
         req = {
             "command": "trajectoryTrackingTasks",
             "task_id": "TASK_TRACKING",
             "arm_index": self.arm_index,
             "point_type": {"space": 1},
-            "data": {"way_point": pos}
+            "data": {"way_point": _pos}
         }        
         if end_effector is not None:
             end_effector = self.__clip(end_effector, 0, 0.08)
             req["data"]["grp_point"] = end_effector
 
-        return self.request(req)
+        return self.send_only(req)
 
     def move_joint(self, pos, tm=-1, is_sync=True, tool=0):
         """
@@ -571,8 +678,8 @@ class Carm:
             "point_type": {"space": 0},
             "data": {"tool": tool, "target_pos": pos, "speed": 100}
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def move_pose(self, pos, tm=-1, is_sync=True, tool=0):
@@ -595,8 +702,8 @@ class Carm:
             "point_type": {"space": 1},
             "data": {"tool": tool, "target_pos": pos, "speed": 100}
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def move_line_pose(self, pos, is_sync=True, tool=0):
@@ -619,8 +726,8 @@ class Carm:
             "point_type": {"space": 1},
             "data": {"tool": tool, "point": pos, "speed": 100}
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def move_line_joint(self, pos, is_sync=True, tool=0):
@@ -641,8 +748,8 @@ class Carm:
             "point_type": {"space": 0},
             "data": {"tool": tool, "point": pos, "speed": 100}
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, is_sync=True, tool=0):
@@ -676,8 +783,8 @@ class Carm:
                 "line_theta_weight": line_theta_weight
             }
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def move_joint_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True):
@@ -719,8 +826,8 @@ class Carm:
             "task_id": 2,
             "name": name
         })
-        if is_sync and res["recv"] == "Task_Recieve":
-            self.__wait_task(res["task_key"])
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
         return res
 
     def check_teach(self):
@@ -803,7 +910,8 @@ class Carm:
                     return points
                 else:
                     return ret["data"]["point1"]
-        except:
+        except Exception as e:
+            print(f"Error parsing forward_kine response: {e}")
             return None
 
     # -------------------- 回调注册 --------------------
@@ -822,17 +930,40 @@ class Carm:
         self.ops["taskFinished"] = callback
 
     # -------------------- 请求/响应核心 --------------------
-    def request(self, req):
+    def request(self, req, timeout=1):
         event = threading.Event()
         task_key = str(uuid.uuid4())
         req["task_key"] = task_key
         self.res_pool[task_key] = {"req": req, "event": event}
-        self.__send(req)
-        event.wait()
-        return self.res_pool.pop(task_key)["res"]
+        
+        if not self.__send(req):
+            self.res_pool.pop(task_key, None)
+            return {'recv': 'Task_Reject', 'errMsg': 'WebSocket not connected'}
+            
+        if not event.wait(timeout=timeout):
+            self.res_pool.pop(task_key, None)
+            return {'recv': 'Task_Reject', 'errMsg': 'Request timed out'}
+            
+        data = self.res_pool.pop(task_key, {})
+        return data.get("res", {'recv': 'Task_Reject', 'errMsg': 'No response data'})
+
+    def send_only(self, req):
+        """仅发送请求，不等待响应"""
+        task_key = str(uuid.uuid4())
+        req["task_key"] = task_key
+        return self.__send(req)
 
     def __send(self, msg):
-        self.ws.send(json.dumps(msg))
+        if self.ws and self.open_ready.is_set():
+            try:
+                self.ws.send(json.dumps(msg))
+                return True
+            except Exception as e:
+                print(f"WebSocket send error: {e}")
+                return False
+        else:
+            print("WebSocket not connected, cannot send message.")
+            return False
 
     # -------------------- 回调处理 --------------------
     def __cbk_status(self, message):
@@ -850,6 +981,7 @@ class Carm:
                 "error_arm_index": message.get("error_arm_index", -1)
             }
             self.ops["onCarmError"](error_info)
+            self.__abort_all_tasks()  # 中断所有等待
 
         # 任务完成解析（只处理当前臂）
         if len(message["arm"]) > self.arm_index:
@@ -857,26 +989,54 @@ class Carm:
             if "task" in arm_json:
                 task_info = arm_json["task"]
                 if "last_task_key" in task_info and task_info["last_task_key"]:
-                    self.ops["taskFinished"](task_info["last_task_key"])
-                    if getattr(self, "wait_task_key", None) == task_info["last_task_key"]:
-                        self.task_event.set()
+                    task_key = task_info["last_task_key"]
+                    self.ops["taskFinished"](task_key)
+                    # 触发特定的 task_pool 事件
+                    if task_key in self.task_pool:
+                        self.task_pool[task_key].set()
+                            
 
     def __cbk_taskfinish(self, message):
         print(f"Task finished callback received: {message}")
 
+    def __cbk_error(self, message):
+        print(f"Error callback received: {message}")
+
     def __on_open(self, ws):
         self.open_ready.set()
+        self._retry_delay = 1.0  # 连接成功后重置重连延迟
         print("Connected successfully.")
+        
+        def fetch_limits():
+            try:
+                if self.is_connected():
+                    res = self.get_limits()
+                    if res and "params" in res:
+                        self.limit = res["params"]
+                else: 
+                    print("Not connected, skipping limits fetch.")
+            except Exception as e:
+                print(f"Error fetching limits: {e}")
+                    
+        threading.Thread(target=fetch_limits, daemon=True).start()
 
     def __on_close(self, ws, code, close_msg):
         print("Disconnected, please check your --addr", code, close_msg)
+        self.open_ready.clear()
+        self.__abort_all_tasks()  # 连接被动断开时，立即中断所有挂起的请求和等待，防止阻塞和不可预知的状态不同步
 
     def __on_message(self, ws, message):
-        msg = json.loads(message)
-        self.last_msg = msg
-        cmd = msg["command"]
-        op = self.ops.get(cmd, lambda msg: self.__response_op(msg))
-        op(msg)
+        try:
+            msg = json.loads(message)
+            self.last_msg = msg
+            cmd = msg.get("command")
+            if not cmd:
+                self.__response_op(msg)
+                return
+            op = self.ops.get(cmd, lambda msg: self.__response_op(msg))
+            op(msg)
+        except Exception as e:
+            print(f"__on_message 异常: {e}, message: {message}")
 
     def __response_op(self, res):
         task_key = res.get("task_key", "")
@@ -887,13 +1047,51 @@ class Carm:
 
     def __recv_loop(self):
         print("Recv loop started.")
-        self.ws.run_forever()
+        current_thread = threading.current_thread()
+        while self._running and getattr(self, 'reader', None) is current_thread:
+            local_ws = getattr(self, 'ws', None)
+            if not local_ws:
+                break
+                
+            try:
+                local_ws.run_forever()
+            except Exception as e:
+                print(f"run_forever 异常: {e}")
+            finally:
+                # 只清理当前活动的连接状态
+                if getattr(self, 'reader', None) is current_thread:
+                    self.open_ready.clear()
+                # 显式关闭并释放资源，防止底层的 sock 泄露与阻塞
+                self.__force_close_ws_socket(local_ws)
+                print("WebSocket connection closed, exiting recv loop iteration.")
 
-    def __wait_task(self, task_key):
-        self.wait_task_key = task_key
-        self.task_event = threading.Event()
-        self.task_event.wait()
-        self.wait_task_key = None
+            if self._running and getattr(self, 'reader', None) is current_thread:
+                print(f"Connection lost. Reconnecting in {self._retry_delay} seconds...")
+                self._reconnect_event.wait(self._retry_delay)
+                self._reconnect_event.clear() # 重置为下一次 wait
+                # 在等待期间可能调用了 close()，需要再次检查状态以决定是否继续重连
+                if not self._running or getattr(self, 'reader', None) is not current_thread:
+                    break
+                    
+                self._retry_delay = min(self._retry_delay * 1.5, self._max_delay)
+                self._create_connection()
+        print("Recv loop thread exiting.")
+
+    def __wait_task(self, task_key, timeout=999999):
+        # 使用独立的 task_key 分离事件，支持多线程并发等待
+        event = threading.Event()
+        self.task_pool[task_key] = event
+        
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            # 每延时0.1秒检查一次连接情况，防止断联后的死锁
+            if event.wait(timeout=0.1):
+                break
+            if not self._running or not self.is_connected():
+                print("Warning: Connection lost or object destroyed while waiting for task.")
+                break
+                
+        self.task_pool.pop(task_key, None)
 
     def __clip(self, value, min_val, max_val):
         return max(min_val, min(value, max_val))
@@ -934,6 +1132,47 @@ class Carm:
                  print(f"Error: Quaternion not normalized (norm={norm})")
                  return False
         return True
+
+    def __abort_all_tasks(self):
+        """内部方法：安全中断所有正在阻塞等待的挂起任务和请求响应。
+        防止调用 clear 后正在等待的线程永远阻塞死锁。
+        """
+        for event in list(self.task_pool.values()):  # list() 避免迭代时受其他线程删除元素导致异常
+            event.set()
+        self.task_pool.clear()
+        
+        for data in list(self.res_pool.values()):  # list 避免迭代中字典大小改变
+            data["event"].set()
+        self.res_pool.clear()
+
+    def __force_close_ws_socket(self, ws_instance):
+        """暴力切断底层的 TCP socket 并彻底关闭 ws_instance，防止泄露或阻塞"""
+        if not ws_instance:
+            return
+        
+        ws_instance.keep_running = False
+        sock_obj = getattr(ws_instance, 'sock', None)
+        
+        if sock_obj:
+            import socket
+            # 依次清理底层的 raw socket 以及 websocket 封装的 socket 对象
+            for s in (getattr(sock_obj, 'sock', None), sock_obj):
+                if not s:
+                    continue
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            ws_instance.sock = None
+            
+        try:
+            ws_instance.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
