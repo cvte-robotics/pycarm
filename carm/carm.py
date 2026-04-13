@@ -892,6 +892,10 @@ class Carm:
         if not isinstance(joint_pos[0], list):
             joint_pos = [joint_pos]
             is_list = False
+
+        for i, v in enumerate(joint_pos):
+            joint_pos[i] = self.__clip_joints(v)
+
         data = {"tool": tool, "point_cnt": len(joint_pos)}
         for i in range(len(joint_pos)):
             data[f"joint{i+1}"] = joint_pos[i]
