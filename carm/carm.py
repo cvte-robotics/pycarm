@@ -26,6 +26,7 @@ class Carm:
         self.open_ready = threading.Event()
         self._reconnect_event = threading.Event()
         self.limit = None
+        self.eeff_limit = None
         self._running = True
         self._create_connection() # 确保第一次的 ws 对象先创建出来
         self.reader = threading.Thread(target=self.__recv_loop, daemon=True)
@@ -99,7 +100,27 @@ class Carm:
         """内部方法：安全获取当前手臂的状态字典"""
         if not self.state or "arm" not in self.state or len(self.state["arm"]) <= self.arm_index:
             return {}
-        return self.state["arm"][self.arm_index]
+        arm_state = self.state["arm"][self.arm_index]
+        # 专门处理新兼容旧协议
+        if "eeff" not in arm_state or arm_state["eeff"].get("eeff_type") is None:
+            dof = arm_state.get("eeff", {}).get("eeff_dof", 0)
+            if dof == 1:
+                arm_state["eeff"]["eeff_type"] = "gripper"
+            elif dof == 6:
+                arm_state["eeff"]["eeff_type"] = "hand"
+            else:
+                arm_state["eeff"]["eeff_type"] = "flange"
+
+        if "eeff" not in arm_state or arm_state["eeff"].get("eeff_name") is None:
+            dof = arm_state.get("eeff", {}).get("eeff_dof", 0)
+            if dof == 1:
+                arm_state["eeff"]["eeff_name"] = "gripper"
+            elif dof == 6:
+                arm_state["eeff"]["eeff_name"] = "hand"
+            else:
+                arm_state["eeff"]["eeff_name"] = "flange"
+
+        return arm_state
 
     @property
     def version(self):
@@ -114,6 +135,13 @@ class Carm:
         """获取关节限位、最大速度、加速度等参数"""
         return self.request({
             "command": "getJointParams",
+            "arm_index": self.arm_index
+        })
+
+    def get_eeff_config(self):
+        """获取末端执行器配置"""
+        return self.request({
+            "command": "getEeffParams",
             "arm_index": self.arm_index
         })
 
@@ -211,6 +239,24 @@ class Carm:
         """规划末端执行器力矩（单位：N）"""
         eeff = self._arm_state.get("eeff", {})
         return eeff.get("eeff_plan_tau", [])
+    
+    @property
+    def end_effector_type(self):
+        """末端执行器类型"""
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_type", "")
+    
+    @property
+    def end_effector_name(self):
+        """末端执行器名称"""
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_name", "")
+
+    @property
+    def end_effector_dof(self):
+        """末端执行器自由度"""
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_dof", 0)
 
     @property
     def gripper_state(self):
@@ -349,6 +395,7 @@ class Carm:
             self.__abort_all_tasks()  # 连接异常时利用安全中断机制，防止死锁
             self.recover()
             self.limit = self.get_limits()["params"]  # 更新配置
+            self.eeff_limit = self.get_eeff_config()["params"]  # 更新末端配置
             return True
 
         # 辅助函数：检查是否满足就绪条件
@@ -403,6 +450,7 @@ class Carm:
             self.__abort_all_tasks()  # 利用安全中断机制防止死锁
             self.recover()
             self.limit = self.get_limits()["params"]
+            self.eeff_limit = self.get_eeff_config()["params"]
             return True
         else:
             return False
@@ -429,6 +477,31 @@ class Carm:
             "arm_index": self.arm_index,
             "mode": mode
         })
+
+    def set_passthrough_data(self, mode, can_id, data):
+        """
+        设置透传数据
+        :param mode: 模式
+        :param can_id: CAN ID
+        :param data: 透传数据（字节列表或十六进制字符串等，需底层支持）
+        """
+        if isinstance(data, list):
+            import binascii
+            data = bytes(data).hex()
+
+        res = self.request({
+            "command": "setPassthroughData",
+            "arm_index": self.arm_index,
+            "mode": mode,
+            "data": {
+                "can_id": can_id,
+                "data": data
+            }
+        })
+        if res.get("ret", 0) == 1 and (mode == 1 or mode == 2):
+            ret_data = res.get("data", {})
+            return ret_data.get("can_id", can_id), bytes.fromhex(ret_data.get("data", ""))
+        return res
     
     def set_end_effector(self, dof, pos, vel, tau):
         """
@@ -441,42 +514,20 @@ class Carm:
         :return: 请求响应
         """
         if not self.__check_input_valid(pos) or not self.__check_input_valid(vel) or not self.__check_input_valid(tau):
-             print(f"Error: set_end_effector input contains NaN or Inf")
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            print(f"Error: set_end_effector input contains NaN or Inf")
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
 
-        def to_dof_list(val, default_val=0.0):
-            if val is None:
-                return [default_val] * dof
-            if isinstance(val, (int, float)):
-                # 单个数值，转为列表，然后补零或截断
-                lst = [float(val)]
-            else:
-                lst = list(val)
-            # 调整长度
-            if len(lst) < dof:
-                lst += [default_val] * (dof - len(lst))
-            else:
-                lst = lst[:dof]
-            return lst
-
-        pos_list = to_dof_list(pos)
-        vel_list = to_dof_list(vel)
-        tau_list = to_dof_list(tau)
-
+        self.__clip_eeff(dof, pos, vel, tau)
         return self.request({
             "command": "setEffectorCtr",
             "arm_index": self.arm_index,
-            "pos": pos_list,
-            "vel": vel_list,
-            "tau": tau_list
+            "pos": pos,
+            "vel": vel,
+            "tau": tau
         })
 
     def set_gripper(self, pos, tau=10):
         """设置夹爪位置和力矩（pos单位：m，tau单位：N）"""
-        if not self.__check_input_valid(pos) or not self.__check_input_valid(tau):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        pos = self.__clip(pos, 0, 0.08)
-        tau = self.__clip(tau, 0, 100)
         return self.set_end_effector(1, [pos], [0.0], [tau])
 
     def set_hand(self, pos, tau, vel):
@@ -487,8 +538,6 @@ class Carm:
         :param vel: 灵巧手速度或列表
         :return: 请求响应
         """
-        if not self.__check_input_valid(pos) or not self.__check_input_valid(tau) or not self.__check_input_valid(vel):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         dof = max(len(pos) if isinstance(pos, list) else 0,
                   len(tau) if isinstance(tau, list) else 0,
                   len(vel) if isinstance(vel, list) else 0)
@@ -504,7 +553,7 @@ class Carm:
         :return: 请求响应，可检查 recv 字段是否为 "Task_Recieve"
         """
         if not self.__check_input_valid(index):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         return self.request({
             "command": "setToolData",
             "operation": "change",
@@ -523,7 +572,7 @@ class Carm:
     def get_tool_coordinate(self, tool):
         """获取指定工具的坐标系（工具末端相对法兰的位姿）"""
         if not self.__check_input_valid(tool):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         return self.request({
             "command": "getCoordinate",
             "arm_index": self.arm_index,
@@ -594,7 +643,7 @@ class Carm:
         :param response_level: 过渡周期数 1~10000
         """
         if not self.__check_input_valid(level) or not self.__check_input_valid(response_level):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         level = self.__clip(level, 0, 10)
         response_level = self.__clip(response_level, 1, 10000)
         return self.request({
@@ -613,8 +662,9 @@ class Carm:
         :param tau: 夹爪力矩（单位：N）
         """
         if not self.__check_input_valid(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        pos = self.__clip_joints(pos)
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+        if not self.__clip_joints(pos):
+            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
         req = {
             "command": "trajectoryTrackingTasks",
             "task_id": "TASK_TRACKING",
@@ -637,7 +687,7 @@ class Carm:
         """
         _pos = list(pos)
         if not self.__check_input_valid(_pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         
         # Normalize quaternion for track_pose
         if isinstance(_pos, list) and len(_pos) >= 7:
@@ -668,8 +718,9 @@ class Carm:
         :param tool: 工具号
         """
         if not self.__check_input_valid(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        pos = self.__clip_joints(pos)
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+        if not self.__clip_joints(pos):
+            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -691,9 +742,9 @@ class Carm:
         :param tool: 工具号
         """
         if not self.__check_input_valid(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         if not self.__check_normalized(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -714,9 +765,9 @@ class Carm:
         :param tool: 工具号
         """
         if not self.__check_input_valid(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         if not self.__check_normalized(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
         # 注意：这里传入的是笛卡尔位姿，point_type=1，直接发送位姿
         res = self.request({
             "command": "webRecieveTasks",
@@ -738,8 +789,9 @@ class Carm:
         :param tool: 工具号
         """
         if not self.__check_input_valid(pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        pos = self.__clip_joints(pos)
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+        if not self.__clip_joints(pos):
+            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVL",
@@ -762,9 +814,9 @@ class Carm:
         :param tool: 工具号
         """
         if not self.__check_input_valid(target_pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
         if not self.__check_normalized(target_pos):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
         line_theta_weight = self.__clip(line_theta_weight, 0, 1)
         accuracy = self.__clip(accuracy, 1e-6, 1.0)  # 最小精度限制，避免过小导致计算问题
         res = self.request({
@@ -855,7 +907,7 @@ class Carm:
         :return: 返回包含关节角的响应
         """
         if not self.__check_input_valid(cart_pose) or not self.__check_input_valid(ref_joints):
-             return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
 
         if not isinstance(cart_pose[0], list):
             cart_pose = [cart_pose]
@@ -864,7 +916,7 @@ class Carm:
 
         for p in cart_pose:
             if not self.__check_normalized(p):
-                 return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+                return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
         
         data = {"tool": tool, "point_cnt": len(cart_pose)}
         for i in range(len(ref_joints)):
@@ -885,16 +937,18 @@ class Carm:
         :return: 位姿列表或单个位姿 [x, y, z, qx, qy, qz, qw]，失败返回 None
         """
         if not self.__check_input_valid(joint_pos):
-             print(f"Error: forward_kine input contains NaN or Inf")
-             return None
+            print(f"Error: forward_kine input contains NaN or Inf")
+            return None
 
         is_list = True
         if not isinstance(joint_pos[0], list):
             joint_pos = [joint_pos]
             is_list = False
 
-        for i, v in enumerate(joint_pos):
-            joint_pos[i] = self.__clip_joints(v)
+        for v in joint_pos:
+            if not self.__clip_joints(v):
+                print(f"Error: forward_kine joint size error for {v}")
+                return None
 
         data = {"tool": tool, "point_cnt": len(joint_pos)}
         for i in range(len(joint_pos)):
@@ -1017,10 +1071,13 @@ class Carm:
                     res = self.get_limits()
                     if res and "params" in res:
                         self.limit = res["params"]
+                    eeff_res = self.get_eeff_config()
+                    if eeff_res and "params" in eeff_res:
+                        self.eeff_limit = eeff_res["params"]
                 else: 
                     print("Not connected, skipping limits fetch.")
             except Exception as e:
-                print(f"Error fetching limits: {e}")
+                print(f"Error fetching limits/eeff_limits: {e}")
                     
         threading.Thread(target=fetch_limits, daemon=True).start()
 
@@ -1102,17 +1159,55 @@ class Carm:
 
     def __clip_joints(self, joints):
         if not self.limit:
-            return joints
+            return True
             
         lower = self.limit.get('limit_lower', [])
         upper = self.limit.get("limit_upper", [])
         
         if len(lower) != len(joints) or len(upper) != len(joints):
-            return joints
+            return False
 
         for i, v in enumerate(joints):
             joints[i] = self.__clip(v, lower[i], upper[i])
-        return joints
+        return True
+    
+    def __clip_eeff(self, dof, eeff_pos, eeff_vel, eeff_tau):
+        def auto_pad(lst, target_len, default_val=0.0):
+            if isinstance(lst, (int, float)):
+                # 单个数值，转为列表，然后补零或截断
+                lst = [float(lst)]
+            else:
+                lst = list(lst)
+    
+            if len(lst) < target_len:
+                lst.extend([default_val] * (target_len - len(lst)))
+            elif len(lst) > target_len:
+                del lst[target_len:]
+
+        if not self.eeff_limit:
+            return True
+        
+        if dof != self.eeff_limit.get('eeff_dof', 0):
+            return False
+
+        lower = self.eeff_limit.get('eeff_lower', [])
+        upper = self.eeff_limit.get("eeff_upper", [])
+        vel = self.eeff_limit.get("eeff_vel", [])
+        tau = self.eeff_limit.get("eeff_tau", [])
+
+        # 自动找齐
+        auto_pad(eeff_pos, dof)
+        auto_pad(eeff_tau, dof)
+        auto_pad(eeff_vel, dof)
+        # 自动限制
+        for i, v in enumerate(eeff_pos):
+            eeff_pos[i] = self.__clip(v, lower[i], upper[i])
+        for i, v in enumerate(eeff_tau):
+            eeff_tau[i] = self.__clip(v, 0.0, tau[i])
+        for i, v in enumerate(eeff_vel):
+            eeff_vel[i] = self.__clip(v, 0.0, vel[i])
+        return True
+
 
     def __check_input_valid(self, values):
         """检查输入值是否包含 NaN 或 Inf"""

@@ -133,6 +133,20 @@ if robot.is_connected():
 
 ---
 
+### 设备配置获取
+
+#### `get_limits()`
+
+* 描述：获取关节限位、最大速度、加速度等参数。
+* 返回：配置数据的 JSON 响应。
+
+#### `get_eeff_config()`
+
+* 描述：获取末端执行器配置。
+* 返回：配置数据的 JSON 响应。
+
+---
+
 ### 状态属性（只读）
 
 所有属性均从最新状态帧中提取，请确保已收到至少一次状态更新。
@@ -176,6 +190,9 @@ print("Joint positions:", robot.joint_pos)
 #### 末端执行器属性
 
 * `end_effector_state`: 状态（-1 未连接/无，0 未使能，1 正常）
+* `end_effector_type`: 末端执行器类型
+* `end_effector_name`: 末端执行器名称
+* `end_effector_dof`: 末端执行器自由度
 * `end_effector_pos` / `vel` / `tau`: 实际位置/速度/力矩（列表）
 * `plan_end_effector_pos` / `vel` / `tau`: 规划值
 * `gripper_state`: 夹爪状态（简化，-1/0/1）
@@ -235,6 +252,23 @@ if robot.set_ready():
 
 ```
 robot.set_control_mode(3)  # 进入拖动模式
+```
+
+#### `set_passthrough_data(mode, can_id, data)`
+
+* 描述：设置透传数据。
+* 参数：
+  * `mode` (int): 模式。
+  * `can_id` (int): CAN ID。
+  * `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
+* 返回：对于 mode 1 或 2，成功时返回 `(can_id, bytes_data)` 元组；否则返回 JSON 请求响应信息。
+
+**python**
+
+```python
+# 发送透传数据，data 可为列表或十六进制字符串
+ret = robot.set_passthrough_data(mode=1, can_id=0x01, data=[0x0A, 0x0B])
+print(ret)  # 成功示例输出: (1, b'\x0a\x0b')
 ```
 
 #### `set_end_effector(dof, pos, vel, tau)`
