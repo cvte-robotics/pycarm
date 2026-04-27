@@ -865,18 +865,72 @@ class Carm:
             self.__wait_task(res.get("task_key"))
         return res
 
+    def move_toppra(self, targets, speed=100, tool=0, is_joint_val=True, is_sync=True):
+        """
+        基于 TOPPRA 的多点轨迹运动
+        :param targets: 目标轨迹点列表，关节位置列表或位姿列表 [x, y, z, qx, qy, qz, qw]
+        :param speed: 速度百分比
+        :param tool: 工具号
+        :param is_joint_val: True 表示关节空间目标，False 表示笛卡尔空间目标
+        :param is_sync: 是否同步等待
+        """
+        if not targets:
+            return {'recv': 'Task_Refuse', 'errMsg': 'Targets cannot be empty'}
+        
+        if not isinstance(targets[0], list):
+            targets = [targets]
+        
+        for p in targets:
+            if not self.__check_input_valid(p):
+                return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            if is_joint_val:
+                if not self.__clip_joints(p):
+                    return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
+            else:
+                if not self.__check_normalized(p):
+                    return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+        
+        req = {
+            "command": "webRecieveTasks",
+            "task_id": "TASK_MOVT",
+            "task_level": "Task_General",
+            "arm_index": self.arm_index,
+            "point_type": {"space": 0 if is_joint_val else 1},
+            "data": {
+                "point_num": len(targets),
+                "speed": speed,
+                "acc": speed,
+                "tool": tool
+            }
+        }
+        
+        for i, target in enumerate(targets):
+            req["data"][f"way_point{i+1}"] = list(target)
+            
+        res = self.request(req)
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
+        return res
+
     def move_joint_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True):
         """
-        关节轨迹运动（待实现）
+        关节轨迹运动（使用基于 TOPPRA 的轨迹规划）
+        :param target_traj: 目标关节位置轨迹列表
+        :param gripper_pos: 夹爪位置（暂不生效，预留）
+        :param stamps: 时间戳（不生效，TOPPRA 仅需要路径点）
+        :param is_sync: 是否同步等待
         """
-        # 当前为占位，后续可根据需要实现
-        raise NotImplementedError("move_joint_traj not implemented yet")
+        return self.move_toppra(target_traj, is_joint_val=True, is_sync=is_sync)
 
     def move_pose_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True):
         """
-        位姿轨迹运动（待实现）
+        位姿轨迹运动（使用基于 TOPPRA 的轨迹规划）
+        :param target_traj: 目标笛卡尔位姿轨迹列表
+        :param gripper_pos: 夹爪位置（暂不生效，预留）
+        :param stamps: 时间戳（不生效，TOPPRA 仅需要路径点）
+        :param is_sync: 是否同步等待
         """
-        raise NotImplementedError("move_pose_traj not implemented yet")
+        return self.move_toppra(target_traj, is_joint_val=False, is_sync=is_sync)
 
     # -------------------- 示教接口 --------------------
     def trajectory_teach(self, off_on, name=""):
