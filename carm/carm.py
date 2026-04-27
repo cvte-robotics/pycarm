@@ -140,10 +140,36 @@ class Carm:
 
     def get_eeff_config(self):
         """获取末端执行器配置"""
-        return self.request({
+        res = self.request({
             "command": "getEeffParams",
             "arm_index": self.arm_index
         })
+        if res.get("params") == None:
+            if self.end_effector_type == "gripper":
+                res["params"] = {
+                    "eeff_dof": self.end_effector_dof,
+                    "eeff_lower": [0.0]*self.end_effector_dof,
+                    "eeff_upper": [0.077]*self.end_effector_dof,
+                    "eeff_vel": [0.0]*self.end_effector_dof,
+                    "eeff_tau": [100.0]*self.end_effector_dof
+                }
+            elif self.end_effector_type == "hand":
+                res["params"] = {
+                    "eeff_dof": self.end_effector_dof,
+                    "eeff_lower": [0.0]*self.end_effector_dof,
+                    "eeff_upper": [255.0]*self.end_effector_dof,
+                    "eeff_vel": [255.0]*self.end_effector_dof,
+                    "eeff_tau": [255.0]*self.end_effector_dof
+                }
+            else:
+                res["params"] = {
+                    "eeff_dof": self.end_effector_dof,
+                    "eeff_lower": [0.0]*self.end_effector_dof,
+                    "eeff_upper": [255.0]*self.end_effector_dof,
+                    "eeff_vel": [255.0]*self.end_effector_dof,
+                    "eeff_tau": [255.0]*self.end_effector_dof
+                }
+        return res
 
     @property
     def joint_pos(self):
@@ -1187,10 +1213,10 @@ class Carm:
         if not self.eeff_limit:
             return True
         
-        if dof != self.eeff_limit.get('eeff_dof', 0):
+        if dof != self.eeff_limit.get("eeff_dof", 0):
             return False
 
-        lower = self.eeff_limit.get('eeff_lower', [])
+        lower = self.eeff_limit.get("eeff_lower", [])
         upper = self.eeff_limit.get("eeff_upper", [])
         vel = self.eeff_limit.get("eeff_vel", [])
         tau = self.eeff_limit.get("eeff_tau", [])
