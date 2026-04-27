@@ -461,13 +461,37 @@ robot.move_line_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], is_sync=True)
 robot.move_flow_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], accuracy=0.001)
 ```
 
+#### `move_toppra(targets, speed=100, tool=0, is_joint_val=True, is_sync=True)`
+
+* 描述：基于 TOPPRA 的多点轨迹运动。
+* 参数：
+  * `targets` (list): 目标轨迹点列表（也可传入单个目标点），可以为关节位置序列或笛卡尔位姿序列。
+  * `speed` (float): 速度百分比。
+  * `tool` (int): 工具号。
+  * `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
+  * `is_sync` (bool): 是否阻塞等待完成。
+
+**python**
+
+```
+robot.move_toppra([[0.1, -0.2, 0.3, 0, 0, 0], [0.2, -0.3, 0.4, 0, 0, 0]], is_joint_val=True)
+```
+
 #### `move_joint_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* **暂未实现** ，占位。
+* 描述：关节轨迹连续运动（内部通过 `move_toppra` 实现）。
+* 参数：
+  * `target_traj` (list): 目标关节位置轨迹列表。
+  * `is_sync` (bool): 是否阻塞等待完成。
+  * *(其他参数为兼容性预留，当前暂不生效)*
 
 #### `move_pose_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* **暂未实现** ，占位。
+* 描述：位姿轨迹连续运动（内部通过 `move_toppra` 实现）。
+* 参数：
+  * `target_traj` (list): 目标笛卡尔位姿轨迹列表。
+  * `is_sync` (bool): 是否阻塞等待完成。
+  * *(其他参数为兼容性预留，当前暂不生效)*
 
 ---
 
