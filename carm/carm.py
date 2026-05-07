@@ -830,12 +830,13 @@ class Carm:
             self.__wait_task(res.get("task_key"))
         return res
 
-    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, is_sync=True, tool=0):
+    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0):
         """
         笛卡尔雅可比迭代运动（TASK_FLOW）
         :param target_pos: 目标位姿 [x, y, z, qx, qy, qz, qw]
         :param line_theta_weight: 位置与姿态的权重（0~1）
         :param accuracy: 收敛精度
+        :param move_line: 是否直线运动
         :param is_sync: 是否同步等待
         :param tool: 工具号
         """
@@ -858,7 +859,8 @@ class Carm:
             },
             "params": {
                 "accuracy": accuracy,
-                "line_theta_weight": line_theta_weight
+                "line_theta_weight": line_theta_weight,
+                "use_line": move_line
             }
         })
         if is_sync and res.get("recv") == "Task_Recieve":

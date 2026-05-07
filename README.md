@@ -300,6 +300,7 @@ robot.set_end_effector(1, pos=0.02, vel=0.0, tau=5.0)
 ```
 robot.set_gripper(0.03, tau=8)
 ```
+
 #### `set_hand(pos, tau, vel)`
 
 * 描述：设置灵巧手位置、力矩和速度。
@@ -315,6 +316,7 @@ robot.set_gripper(0.03, tau=8)
 # 设置 3 个自由度的灵巧手
 robot.set_hand([0.1, 0.2, 0.3], tau=[5.0, 5.0, 5.0], vel=[0.1, 0.1, 0.1])
 ```
+
 #### `set_tool_index(index)`
 
 * 描述：切换当前工具号。
@@ -447,13 +449,14 @@ robot.move_line_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], is_sync=True)
 
 * 描述：关节空间直线运动。
 
-#### `move_flow_pose(target_pos, line_theta_weight=0.5, accuracy=0.0001, is_sync=True, tool=0)`
+#### `move_flow_pose(target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0)`
 
 * 描述：笛卡尔雅可比迭代运动（TASK_FLOW）。
 * 参数：
   * `target_pos` (list): 目标位姿。
   * `line_theta_weight` (float): 位置/姿态权重（0~1）。
   * `accuracy` (float): 收敛精度。
+  * `move_line` (bool): 是否直线运动。
 
 **python**
 
