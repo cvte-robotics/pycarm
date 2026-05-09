@@ -580,13 +580,13 @@ print("Cartesian pose:", pose)
 
 * 描述：注册错误处理回调。
 * 参数：
-  * `callback`: 函数签名 `fn(error_code, error_message)`。
+  * `callback`: 函数签名 `fn(error_info)`，其中 `error_info` 是包含错误详情的字典。
 
 **python**
 
 ```
-def my_error_handler(code, msg):
-    print(f"Error {code}: {msg}")
+def my_error_handler(error_info):
+    print(f"Error: {error_info}")
 
 robot.on_error(my_error_handler)
 ```
@@ -604,6 +604,22 @@ def task_done(task_key):
     print(f"Task {task_key} finished")
 
 robot.on_task_finish(task_done)
+```
+
+#### `on_update(callback)`
+
+* 描述：注册状态更新回调。
+* 参数：
+  * `callback`: 函数签名 `fn(arm_state)`，参数为当前机械臂状态字典。状态字典中包含 `Unix_time_stamp` 字段（double类型），可用于获取底层状态精确的更新时间戳。
+
+**python**
+
+```python
+def state_updated(arm_state):
+    timestamp = arm_state.get("Unix_time_stamp", 0.0)
+    print(f"State updated at timestamp: {timestamp}")
+
+robot.on_update(state_updated)
 ```
 
 ---

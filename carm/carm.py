@@ -17,10 +17,15 @@ class Carm:
         self._max_delay = 10.0
 
         self.ops = {
-            "webSendRobotState": lambda msg: self.__cbk_status(msg),
-            "taskFinished": lambda msg: self.__cbk_taskfinish(msg),
-            "onCarmError": lambda msg: self.__cbk_error(msg)
+            "webSendRobotState": lambda msg: self.__cbk_status(msg)
         }
+
+        self.call_back = {
+            "taskFinished": lambda msg: self.__cbk_taskfinish(msg),
+            "onCarmError": lambda msg: self.__cbk_error(msg),
+            "updateRobotState": lambda msg: self.__cbk_update(msg)
+        }
+
         self.res_pool = {}
         self.task_pool = {}
         self.open_ready = threading.Event()
@@ -1058,16 +1063,23 @@ class Carm:
     def on_error(self, callback):
         """
         注册错误回调函数
-        :param callback: 函数签名 fn(error_code, error_message)
+        :param callback: 函数签名 fn(error_info)
         """
-        self.ops["onCarmError"] = callback
+        self.call_back["onCarmError"] = callback
 
     def on_task_finish(self, callback):
         """
         注册任务完成回调函数
         :param callback: 函数签名 fn(task_key)
         """
-        self.ops["taskFinished"] = callback
+        self.call_back["taskFinished"] = callback
+
+    def on_update(self, callback):
+        """
+        注册状态更新回调函数
+        :param callback: 函数签名 fn(arm_state)
+        """
+        self.call_back["updateRobotState"] = callback
 
     # -------------------- 请求/响应核心 --------------------
     def request(self, req, timeout=1):
@@ -1111,6 +1123,10 @@ class Carm:
             return
 
         self.state = message
+        
+        # 触发状态更新回调
+        if self._arm_state:
+            self.call_back.get("updateRobotState", lambda msg: None)(self._arm_state)
 
         # 全局错误解析
         if message.get("error", 0) != 0 or message.get("errMsg", ""):
@@ -1120,7 +1136,7 @@ class Carm:
                 "errMsg": message.get("errMsg"),
                 "error_arm_index": message.get("error_arm_index", -1)
             }
-            self.ops["onCarmError"](error_info)
+            self.call_back.get("onCarmError", lambda msg: None)(error_info)
             self.__abort_all_tasks()  # 中断所有等待
 
         # 任务完成解析（只处理当前臂）
@@ -1130,7 +1146,7 @@ class Carm:
                 task_info = arm_json["task"]
                 if "last_task_key" in task_info and task_info["last_task_key"]:
                     task_key = task_info["last_task_key"]
-                    self.ops["taskFinished"](task_key)
+                    self.call_back.get("taskFinished", lambda msg: None)(task_key)
                     # 触发特定的 task_pool 事件
                     if task_key in self.task_pool:
                         self.task_pool[task_key].set()
@@ -1141,6 +1157,9 @@ class Carm:
 
     def __cbk_error(self, message):
         print(f"Error callback received: {message}")
+
+    def __cbk_update(self, message):
+        pass
 
     def __on_open(self, ws):
         self.open_ready.set()
