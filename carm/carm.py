@@ -128,6 +128,41 @@ class Carm:
         return arm_state
 
     @property
+    def arm_name(self):
+        """机械臂名称"""
+        return self._arm_state.get("arm_name", "")
+
+    @property
+    def arm_dof(self):
+        """机械臂自由度"""
+        return self._arm_state.get("arm_dof", 0)
+
+    @property
+    def servo_status(self):
+        """伺服状态：1 使能，0 失能"""
+        return self._arm_state.get("servo", 0)
+
+    @property
+    def controller_state(self):
+        """控制器运行状态：-1-error, 0-standby, 1-running, 2-dragging"""
+        return self._arm_state.get("state", 0)
+
+    @property
+    def fsm_mode(self):
+        """控制器模式string：ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION"""
+        return self._arm_state.get("fsm_state", "IDLE")
+
+    @property
+    def speed_percentage(self):
+        """当前设定运行速度标幺值（0.0~1.0）"""
+        return self._arm_state.get("vel_per", 1.0)
+
+    @property
+    def on_debug_mode(self):
+        """是否在仿真状态"""
+        return self.state.get("on_debug_mode", False)
+
+    @property
     def version(self):
         """获取控制器软件版本"""
         return self.request({
@@ -1077,7 +1112,7 @@ class Carm:
     def on_update(self, callback):
         """
         注册状态更新回调函数
-        :param callback: 函数签名 fn(arm_state)
+        :param callback: 函数签名 fn(Unix_time)
         """
         self.call_back["updateRobotState"] = callback
 
@@ -1126,7 +1161,7 @@ class Carm:
         
         # 触发状态更新回调
         if self._arm_state:
-            self.call_back.get("updateRobotState", lambda msg: None)(self._arm_state)
+            self.call_back.get("updateRobotState", lambda msg: None)(self.state.get("Unix_time_stamp", 0))
 
         # 全局错误解析
         if message.get("error", 0) != 0 or message.get("errMsg", ""):

@@ -151,6 +151,16 @@ if robot.is_connected():
 
 所有属性均从最新状态帧中提取，请确保已收到至少一次状态更新。
 
+#### 机械臂基础状态
+
+* `arm_name`: 机械臂名称（字符串）
+* `arm_dof`: 机械臂自由度（整数）
+* `servo_status`: 伺服状态（1: 使能，0: 失能）
+* `controller_state`: 控制器运行状态（-1-error, 0-standby, 1-running, 2-dragging）
+* `fsm_mode`: 控制器模式（如 ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION）
+* `speed_percentage`: 获取当前设定运行速度标幺值
+* `on_debug_mode`: 是否在仿真状态（布尔值）
+
 #### `version`
 
 * 返回：控制器软件版本（字符串）。
@@ -610,13 +620,12 @@ robot.on_task_finish(task_done)
 
 * 描述：注册状态更新回调。
 * 参数：
-  * `callback`: 函数签名 `fn(arm_state)`，参数为当前机械臂状态字典。状态字典中包含 `Unix_time_stamp` 字段（double类型），可用于获取底层状态精确的更新时间戳。
+  * `callback`: 函数签名 `fn(Unix_time)`，参数为当前状态更新的 Unix 时间戳（Unix_time_stamp，double类型）。
 
 **python**
 
 ```python
-def state_updated(arm_state):
-    timestamp = arm_state.get("Unix_time_stamp", 0.0)
+def state_updated(timestamp):
     print(f"State updated at timestamp: {timestamp}")
 
 robot.on_update(state_updated)
