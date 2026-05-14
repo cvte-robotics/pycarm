@@ -89,7 +89,7 @@ class Carm:
         
         # 必须死等该旧线程正式退出返回（杜绝它在任何地方死灰复燃产生僵尸分身）
         if old_reader and old_reader.is_alive() and old_reader is not threading.current_thread():
-            old_reader.join() # 无 timeout，绝对保证断联后后台干净
+            old_reader.join(timeout=3.0) # timeout 3s 防止连接不正确的IP卡死，无timeout 绝对保证断联后后台干净
             
         self.open_ready.clear()
         self.ws = None # 完全切断残余连接对象引用

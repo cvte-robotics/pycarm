@@ -89,6 +89,43 @@ robot.move_joint([0.1, -0.2, 0.3, 0.0, 0.0, 0.0], is_sync=True)
 robot.disconnect()
 ```
 
+## ROS 2 节点与可视化操作界面 (carm_ros2.py)
+
+本项目附带了一个基于 `rclpy` 和 `tkinter` 构建的轻量级 ROS 2 节点与操作界面，可以将底层的设备控制封装为标准的 ROS 2 话题进行通讯。
+
+### 功能特性
+
+1. **可视化设备连接管理**：在界面直接填写目标 IP 地址和 `Arm Index` 即可进行连接与断开，且自带实时的连通状态指示灯（绿/灰）。
+2. **ROS 2 话题热更新**：允许用户在界面配置区域为每一项发布与订阅重新命名，一键“重启并更新话题”即刻生效，无需重启代码。
+
+### 运行方式
+
+由于包含 ROS 2 内容，请确保终端已初始化 ROS 2 环境（如 `source /opt/ros/<your_ros>/setup.bash`），可以直接在终端执行以下快捷指令唤起界面：
+
+**bash**
+
+```bash
+carm_ros2
+```
+
+### 默认话题清单
+
+该界面默认会自动暴露以下话题接入您的 ROS 2 系统，您能在界面中自由修改：
+
+- **发布话题 (Publishers):**
+
+  - `real_joint_state` [sensor_msgs/JointState]: 发布实时关节和夹爪状态 (位置、速度、力矩)
+  - `flange_cart_state` [geometry_msgs/PoseStamped]: 发布机械臂法兰笛卡尔位姿
+  - `arm_state` [std_msgs/Int16MultiArray]: 机械臂综合状态集合（连接状态、伺服状态、被动/主动模式等）
+  - `task_completion` [std_msgs/String]: 任务完成提示
+  - `carm_error` [std_msgs/String]: 运行报错提示
+- **订阅话题 (Subscribers):**
+
+  - **基础指令**: `connect` [String], `ready` [Bool], `emergency_stop` [Bool]
+  - **配置指令**: `set_speed_level` [Int16MultiArray], `set_servo_enable` [Bool], `set_collision_config` [Int16MultiArray], `set_control_mode` [Int8]
+  - **关节空间运动**: `move_joint`, `move_line_joint`, `move_tracking_joint`, `set_gripper` [以上均为 sensor_msgs/JointState]
+  - **笛卡尔空间运动**: `move_pose`, `move_line_pose`, `move_tracking_pose` [以上均为 geometry_msgs/Pose]
+
 ## API 参考
 
 ### 连接管理
