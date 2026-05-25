@@ -224,7 +224,7 @@ class ArmControlNode(Node):
         # Publish arm_state
         state_msg = Int16MultiArray()
         fsm_str = self.carm_.fsm_mode
-        fsm_map = {"ERROR": -1, "IDLE": 0, "POSITION": 1, "MIT": 2, "CURRENT": 3, "PF": 4, "TELEOPERATION": 5}
+        fsm_map = {"ERROR": -1, "IDLE": 0, "POSITION": 1, "MIT": 2, "CURRENT": 3, "PF": 4, "TELEOPERATION": 5, "IMPEDANCE": 6}
         fsm_val = fsm_map.get(fsm_str, 0) if isinstance(fsm_str, str) else 0
 
         variable_names = [

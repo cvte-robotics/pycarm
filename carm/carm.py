@@ -149,7 +149,7 @@ class Carm:
 
     @property
     def fsm_mode(self):
-        """控制器模式string：ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION"""
+        """控制器模式string：ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION, IMPEDANCE"""
         return self._arm_state.get("fsm_state", "IDLE")
 
     @property
@@ -1347,6 +1347,9 @@ class Carm:
 
     def __check_input_valid(self, values):
         """检查输入值是否包含 NaN 或 Inf"""
+        if values is None or (isinstance(values, list) and len(values) == 0):
+            print("Error: Input is None or empty list")
+            return False
         if isinstance(values, (int, float)):
             if math.isnan(values) or math.isinf(values):
                 print(f"Error: Input contains NaN or Inf: {values}")
