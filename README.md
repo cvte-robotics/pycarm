@@ -175,12 +175,22 @@ if robot.is_connected():
 #### `get_limits()`
 
 * 描述：获取关节限位、最大速度、加速度等参数。
-* 返回：配置数据的 JSON 响应。
+* 返回：字典，包含以下配置字段（可能依控制器的不同部分存在）：
+  * `limit_lower` (list): 关节下限位 (rad)
+  * `limit_upper` (list): 关节上限位 (rad)
+  * `limit_vel` (list): 关节最大速度 (rad/s)
+  * `limit_acc` (list): 关节最大加速度 (rad/s^2)
+  * `limit_jerk` (list): 关节最大加加速度 (rad/s^3)
 
 #### `get_eeff_config()`
 
 * 描述：获取末端执行器配置。
-* 返回：配置数据的 JSON 响应。
+* 返回：包含完整末端配置特性的字典，使用时请通过以下键名解析：
+  * `eeff_dof` (int): 末端执行器自由度数量
+  * `eeff_lower` (list): 末端下限位
+  * `eeff_upper` (list): 末端上限位
+  * `eeff_vel` (list): 末端最大速度
+  * `eeff_tau` (list): 末端最大力矩
 
 ---
 
@@ -269,6 +279,8 @@ print("Current tool:", robot.tool_index)
 
 ### 控制命令
 
+> **注：** 大部分运动控制和配置指令在执行成功且被服务端接收时，默认返回布尔值 `True`，因异常或拒绝时返回 `False`。
+
 #### `set_ready(timeout_ms=3000)`
 
 * 描述：将机械臂置为就绪状态（清除错误、伺服上使能、切换到位置模式）。
@@ -305,17 +317,17 @@ robot.set_control_mode(3)  # 进入拖动模式
 
 * 描述：设置透传数据。
 * 参数：
-  * `mode` (int): 模式。
+  * `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
   * `can_id` (int): CAN ID。
   * `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
-* 返回：对于 mode 1 或 2，成功时返回 `(can_id, bytes_data)` 元组；否则返回 JSON 请求响应信息。
+* 返回：当模式为 1 或 2 且执行成功时，返回 `(True, can_id, bytes_data)` 三元组；其它情况返回 `(False, None, None)`。
 
 **python**
 
 ```python
 # 发送透传数据，data 可为列表或十六进制字符串
-ret = robot.set_passthrough_data(mode=1, can_id=0x01, data=[0x0A, 0x0B])
-print(ret)  # 成功示例输出: (1, b'\x0a\x0b')
+success, can_id, data = robot.set_passthrough_data(mode=1, can_id=0x01, data=[0x0A, 0x0B])
+print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
 ```
 
 #### `set_end_effector(dof, pos, vel, tau)`
@@ -381,7 +393,7 @@ robot.set_tool_index(1)
 * 描述：获取指定工具坐标系（工具末端相对法兰的位姿）。
 * 参数：
   * `tool` (int): 工具号。
-* 返回：JSON 响应。
+* 返回：工具的笛卡尔坐标 `[x, y, z, qx, qy, qz, qw]` 列表，失败或异常返回空列表 `[]`。
 
 #### `set_collision_config(flag=True, level=10)`
 
@@ -595,13 +607,13 @@ print("Recorded trajectories:", traj_list)
   * `cart_pose` (list 或 list of lists): 目标位姿（单个或多个）。
   * `ref_joints` (list 或 list of lists): 参考关节角。
   * `tool` (int): 工具号。
-* 返回：包含关节角的 JSON 响应。
+* 返回：成功时返回解析过的关节角结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
 
 **python**
 
-```
-res = robot.inverse_kine([0.5, 0, 0.3, 0.707, 0, 0.707, 0], [0,0,0,0,0,0])
-joints = res["data"]["joint1"]
+```python
+joints = robot.inverse_kine([0.5, 0, 0.3, 0.707, 0, 0.707, 0], [0,0,0,0,0,0])
+print("Inverse joints:", joints)
 ```
 
 #### `forward_kine(joint_pos, tool=0)`
@@ -610,7 +622,7 @@ joints = res["data"]["joint1"]
 * 参数：
   * `joint_pos` (list 或 list of lists): 关节角。
   * `tool` (int): 工具号。
-* 返回：位姿（单个或列表），失败返回 None。
+* 返回：成功时返回解析过的位姿结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
 
 **python**
 

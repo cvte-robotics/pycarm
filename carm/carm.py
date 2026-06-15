@@ -51,13 +51,17 @@ class Carm:
         print(f"Connecting to {self.addr}:{self.port}...")
 
     # -------------------- 连接管理 --------------------
-    def connect(self, addr=None, port=None, timeout=1):
+    def connect(self, addr=None, port=None, timeout=1) -> bool:
         """
         连接到机械臂控制器。
-        :param addr: IP 地址，默认使用初始化时的地址
-        :param port: 端口，默认 8090
-        :param timeout: 连接超时（秒），默认 1
-        :return: True 表示连接成功，False 表示失败
+
+        :param addr: str, IP 地址，默认使用初始化时的地址
+
+        :param port: int, 端口，默认 8090
+
+        :param timeout: float, 连接超时（秒），默认 1
+
+        :return: bool, True 表示连接成功，False 表示失败
         """
         if addr:
             self.addr = addr
@@ -72,7 +76,7 @@ class Carm:
         self.reader.start()
         return self.open_ready.wait(timeout)
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """断开与机械臂控制器的连接，绝对安全地释放 ws 及停止后台线程"""
         if not getattr(self, '_running', False) and getattr(self, 'reader', None) is None:
             return 
@@ -95,7 +99,7 @@ class Carm:
         self.ws = None # 完全切断残余连接对象引用
         print("Disconnected cleanly.")
 
-    def is_connected(self):
+    def is_connected(self) -> bool:
         """检查当前是否已连接"""
         return self.open_ready.is_set()
 
@@ -163,23 +167,47 @@ class Carm:
         return self.state.get("on_debug_mode", False)
 
     @property
-    def version(self):
-        """获取控制器软件版本"""
-        return self.request({
+    def version(self) -> str:
+        """
+        获取控制器软件版本
+        
+        :return: str, 版本号字符串
+        """
+        res = self.request({
             "command": "getArmIntrinsicProperties",
             "arm_index": self.arm_index,
             "type": "version"
         })
+        return res.get("version", "")
 
-    def get_limits(self):
-        """获取关节限位、最大速度、加速度等参数"""
-        return self.request({
+    def get_limits(self) -> dict:
+        """
+        获取关节限位、最大速度、加速度等参数。
+        
+        :return: dict 完整包含以下配置字段（可能依控制器的不同部分存在）：
+                 - limit_lower: [list] 关节下限位 (rad)
+                 - limit_upper: [list] 关节上限位 (rad)
+                 - limit_vel: [list] 关节最大速度 (rad/s)
+                 - limit_acc: [list] 关节最大加速度 (rad/s^2)
+                 - limit_jerk: [list] 关节最大加加速度 (rad/s^3)
+        """
+        res = self.request({
             "command": "getJointParams",
             "arm_index": self.arm_index
         })
+        return res.get("params", {})
 
-    def get_eeff_config(self):
-        """获取末端执行器配置"""
+    def get_eeff_config(self) -> dict:
+        """
+        获取末端执行器配置。
+        
+        :return: dict 完整包含以下末端配置字段：
+                 - eeff_dof: [int] 末端执行器自由度数量
+                 - eeff_lower: [list] 末端下限位
+                 - eeff_upper: [list] 末端上限位
+                 - eeff_vel: [list] 末端最大速度
+                 - eeff_tau: [list] 末端最大力矩
+        """
         res = self.request({
             "command": "getEeffParams",
             "arm_index": self.arm_index
@@ -209,7 +237,7 @@ class Carm:
                     "eeff_vel": [255.0]*self.end_effector_dof,
                     "eeff_tau": [255.0]*self.end_effector_dof
                 }
-        return res
+        return res.get("params", {})
 
     @property
     def joint_pos(self):
@@ -425,11 +453,13 @@ class Carm:
         return eeff.get("eeff_plan_tau", [])
 
     # -------------------- 控制命令 --------------------
-    def set_ready(self, timeout_ms=3000):
+    def set_ready(self, timeout_ms=3000) -> bool:
         """
         将机械臂设置为就绪状态（错误清除、伺服上使能、切换到位置模式）。
-        :param timeout_ms: 超时时间（毫秒），默认 3000ms
-        :return: True 表示就绪成功，False 表示失败
+
+        :param timeout_ms: int, 超时时间（毫秒），默认 3000ms
+
+        :return: bool, True 表示就绪成功，False 表示失败
         """
         # 初始等待 0.1 秒，对应 C++ 的 usleep(100000)
         time.sleep(0.1)
@@ -460,8 +490,8 @@ class Carm:
             self.clean_carm_error()
             self.__abort_all_tasks()  # 连接异常时利用安全中断机制，防止死锁
             self.recover()
-            self.limit = self.get_limits()["params"]  # 更新配置
-            self.eeff_limit = self.get_eeff_config()["params"]  # 更新末端配置
+            self.limit = self.get_limits()  # 更新配置
+            self.eeff_limit = self.get_eeff_config()  # 更新末端配置
             return True
 
         # 辅助函数：检查是否满足就绪条件
@@ -515,41 +545,70 @@ class Carm:
             self.clean_carm_error()
             self.__abort_all_tasks()  # 利用安全中断机制防止死锁
             self.recover()
-            self.limit = self.get_limits()["params"]
-            self.eeff_limit = self.get_eeff_config()["params"]
+            self.limit = self.get_limits()
+            self.eeff_limit = self.get_eeff_config()
             return True
         else:
             return False
 
-    def set_servo_enable(self, enable=True):
+    def ping(self, date=None) -> dict:
+        """
+        发送ping请求，底层返回收到消息的Unix时间戳，用于测试通讯延时以及带宽。
+        由于该方法有多个参数用于网络和延迟分析，保留完整的字典返回。
+        解析方式：
+        - `res.get("Unix_resp")`: 请求发出时的时间戳，接收后被改成接收到的时间戳（单位：秒，字符串格式），两者的差值即为单程网络延时。
+        - `res.get("data")`: 请求携带的数据载荷（date 参数）
+
+        :param date: str, 携带的数据载荷
+
+        :return: dict, 请求的完整响应字典
+        """
+        import time
+        return self.request({
+            "command": "ping",
+            "Unix_resp": str(time.time()),
+            "data": date
+        })
+
+    def set_servo_enable(self, enable=True) -> bool:
         """
         设置伺服使能
-        :param enable: True 使能，False 下使能
+
+        :param enable: bool, True 使能，False 下使能
         """
-        return self.request({
+        res = self.request({
             "command": "setServoEnable",
             "arm_index": self.arm_index,
             "enable": enable
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def set_control_mode(self, mode=1):
+    def set_control_mode(self, mode=1) -> bool:
         """
         设置控制模式
-        :param mode: 0-IDLE, 1-点位, 2-MIT, 3-拖动, 4-力位混合
+
+        :param mode: int, 0-IDLE, 1-点位, 2-MIT, 3-拖动, 4-力位混合
         """
         mode = self.__clip(mode, 0, 4)
-        return self.request({
+        res = self.request({
             "command": "setControlMode",
             "arm_index": self.arm_index,
             "mode": mode
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def set_passthrough_data(self, mode, can_id, data):
+    def set_passthrough_data(self, mode, can_id, data) -> tuple:
         """
         设置透传数据
-        :param mode: 模式
-        :param can_id: CAN ID
-        :param data: 透传数据（字节列表或十六进制字符串等，需底层支持）
+
+        :param mode: int, 模式，0-仅发送，1-仅接收，2-发送并接收
+
+        :param can_id: int, CAN ID
+
+        :param data: list/str, 透传数据（字节列表或十六进制字符串等，需底层支持）
+
+        :return: tuple, 当模式为 1 或 2，并且执行成功时，直接返回两参数元组：(can_id, response_data_bytes)。
+                 其它情况返回 bool 表示执行是否成功。
         """
         if isinstance(data, list):
             import binascii
@@ -564,173 +623,218 @@ class Carm:
                 "data": data
             }
         })
-        if res.get("ret", 0) == 1 and (mode == 1 or mode == 2):
-            ret_data = res.get("data", {})
-            return ret_data.get("can_id", can_id), bytes.fromhex(ret_data.get("data", ""))
-        return res
+        if res.get("recv") == "Task_Recieve":
+            if res.get("ret", 0) == 1 and (mode == 1 or mode == 2):
+                ret_data = res.get("data", {})
+                return True, ret_data.get("can_id", can_id), bytes.fromhex(ret_data.get("data", ""))
+            else:
+                return res.get("ret", 0) == 1, None, None
+        else:
+            return False , None, None
+        
     
-    def set_end_effector(self, dof, pos, vel, tau):
+    def set_end_effector(self, dof, pos, vel, tau) -> bool:
         """
         设置末端执行器（夹爪）的位置、速度、力矩，指定自由度 dof。
         输入可以是单个数值或列表，长度不足 dof 则补零，超出则截断。
-        :param dof: 末端执行器自由度（整数）
-        :param pos: 位置值或列表（单位：m or rad）
-        :param vel: 速度值或列表（单位：m/s or rad/s）
-        :param tau: 力矩值或列表（单位：N）
-        :return: 请求响应
+
+        :param dof: int, 末端执行器自由度（整数）
+
+        :param pos: float/list, 位置值或列表（单位：m or rad）
+
+        :param vel: float/list, 速度值或列表（单位：m/s or rad/s）
+
+        :param tau: float/list, 力矩值或列表（单位：N）
+
+        :return: bool, 执行是否成功
         """
         if not self.__check_input_valid(pos) or not self.__check_input_valid(vel) or not self.__check_input_valid(tau):
             print(f"Error: set_end_effector input contains NaN or Inf")
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
 
         self.__clip_eeff(dof, pos, vel, tau)
-        return self.request({
+        res = self.request({
             "command": "setEffectorCtr",
             "arm_index": self.arm_index,
             "pos": pos,
             "vel": vel,
             "tau": tau
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def set_gripper(self, pos, tau=10):
+    def set_gripper(self, pos, tau=10) -> bool:
         """设置夹爪位置和力矩（pos单位：m，tau单位：N）"""
         return self.set_end_effector(1, [pos], [0.0], [tau])
 
-    def set_hand(self, pos, tau, vel):
+    def set_hand(self, pos, tau, vel) -> bool:
         """
         设置灵巧手位置、力矩和速度
-        :param pos: 灵巧手位置或列表
-        :param tau: 灵巧手力矩或列表
-        :param vel: 灵巧手速度或列表
-        :return: 请求响应
+
+        :param pos: float/list, 灵巧手位置或列表
+
+        :param tau: float/list, 灵巧手力矩或列表
+
+        :param vel: float/list, 灵巧手速度或列表
+
+        :return: bool, 执行是否成功
         """
         dof = max(len(pos) if isinstance(pos, list) else 0,
                   len(tau) if isinstance(tau, list) else 0,
                   len(vel) if isinstance(vel, list) else 0)
         if dof == 0 or len(tau)!= dof or len(vel)!= dof:
             print(f"Error: set_hand dof is zero, invalid input.")
-            return {'recv': 'Task_Refuse', 'errMsg': 'Invalid input for hand control'}
+            return False
         return self.set_end_effector(dof, pos, vel, tau)
 
-    def set_tool_index(self, index):
+    def set_tool_index(self, index) -> bool:
         """
         设置当前工具号。
-        :param index: 工具索引（整数，通常从 0 开始）
-        :return: 请求响应，可检查 recv 字段是否为 "Task_Recieve"
+
+        :param index: int, 工具索引（整数，通常从 0 开始）
+
+        :return: bool, 执行是否成功，可检查 recv 字段是否为 "Task_Recieve"
         """
         if not self.__check_input_valid(index):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        return self.request({
+            return False
+        res = self.request({
             "command": "setToolData",
             "operation": "change",
             "index": index,
             "arm_index": self.arm_index
         })
+        return res.get("recv") == "Task_Recieve"
 
     @property
     def tool_index(self):
         """
         获取当前工具号。
-        :return: 当前工具索引（整数），若状态未更新或无此字段返回 0
+
+        :return: int, 当前工具索引（整数），若状态未更新或无此字段返回 0
         """
         return self._arm_state.get("tool", 0)
         
-    def get_tool_coordinate(self, tool):
-        """获取指定工具的坐标系（工具末端相对法兰的位姿）"""
+    def get_tool_coordinate(self, tool) -> list:
+        """
+        获取指定工具的坐标系（工具末端相对法兰的位姿）
+
+        :param tool: int, 工具索引
+
+        :return: list, 工具的笛卡尔坐标 [x, y, z, qx, qy, qz, qw]，执行失败或异常时返回空列表
+        """
         if not self.__check_input_valid(tool):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
-        return self.request({
+            return []
+        res = self.request({
             "command": "getCoordinate",
             "arm_index": self.arm_index,
             "type": "tool",
             "index": tool
         })
+        if res.get("recv") == "Task_Recieve":
+            return res.get("data", {}).get("point", [])
+        return []
 
-    def set_collision_config(self, flag=True, level=10):
+    def set_collision_config(self, flag=True, level=10) -> bool:
         """
         设置碰撞检测
-        :param flag: 开关
-        :param level: 灵敏度等级 0~2
+
+        :param flag: bool, 开关
+
+        :param level: int, 灵敏度等级 0~2
         """
         level = self.__clip(level, 0, 2)
-        return self.request({
+        res = self.request({
             "command": "setCollisionConfig",
             "arm_index": self.arm_index,
             "flag": flag,
             "level": level
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def stop(self, type=0):
+    def stop(self, type=0) -> bool:
         """
         停止机械臂
-        :param type: 0-暂停, 1-停止, 2-禁用, 3-紧急停止
+
+        :param type: int, 0-暂停, 1-停止, 2-禁用, 3-紧急停止
         """
         type = self.__clip(type, 0, 3)
         stop_id = ["SIG_ARM_PAUSE", "SIG_ARM_STOP", "SIG_ARM_DISABLE", "SIG_EMERGENCY_STOP"]
-        return self.request({
+        res = self.request({
             "command": "stopSignals",
             "arm_index": self.arm_index,
             "stop_id": stop_id[type],
             "step_cnt": 5
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def stop_task(self, at_once=False):
+    def stop_task(self, at_once=False) -> bool:
         """
         停止当前任务
-        :param at_once: True 立即停止，False 完成当前任务后停止
+
+        :param at_once: bool, True 立即停止，False 完成当前任务后停止
         """
-        return self.request({
+        res = self.request({
             "command": "stopSignals",
             "arm_index": self.arm_index,
             "stop_id": "SIG_TASK_STOP",
             "stop_at_once": at_once
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def recover(self):
+    def recover(self) -> bool:
         """恢复机械臂（退出暂停/急停）"""
-        return self.request({
+        res = self.request({
             "command": "stopSignals",
             "arm_index": self.arm_index,
             "stop_id": "SIG_ARM_RECOVER",
             "step_cnt": 5
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def clean_carm_error(self):
+    def clean_carm_error(self) -> bool:
         """清除控制器错误"""
-        return self.request({
+        res = self.request({
             "command": "setControllerErrorReset",
             "arm_index": self.arm_index
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def set_speed_level(self, level=5.0, response_level=20):
+    def set_speed_level(self, level=5.0, response_level=20) -> bool:
         """
         设置速度等级
-        :param level: 速度等级 0~10
-        :param response_level: 过渡周期数 1~10000
+
+        :param level: float, 速度等级 0~10
+
+        :param response_level: int, 过渡周期数 1~10000
         """
         if not self.__check_input_valid(level) or not self.__check_input_valid(response_level):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         level = self.__clip(level, 0, 10)
         response_level = self.__clip(response_level, 1, 10000)
-        return self.request({
+        res = self.request({
             "command": "setSpeedLevel",
             "arm_index": self.arm_index,
             "level": level,
             "response_level": response_level
         })
+        return res.get("recv") == "Task_Recieve"
 
     # -------------------- 运动接口 --------------------
-    def track_joint(self, pos, end_effector=None):
+    def track_joint(self, pos, end_effector=None) -> bool:
         """
         关节空间轨迹跟踪（周期性发送目标关节位置）
-        :param pos: 目标关节位置
-        :param end_effector: 夹爪位置（单位：m）
-        :param tau: 夹爪力矩（单位：N）
+
+        :param pos: list, 目标关节位置
+
+        :param end_effector: float, 夹爪位置（单位：m）
+
+        :param tau: float, 夹爪力矩（单位：N）
+
+        :return: bool, 是否成功发送
         """
         if not self.__check_input_valid(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__clip_joints(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
+            return False
         req = {
             "command": "trajectoryTrackingTasks",
             "task_id": "TASK_TRACKING",
@@ -744,16 +848,21 @@ class Carm:
             
         return self.send_only(req)
 
-    def track_pose(self, pos, end_effector=None):
+    def track_pose(self, pos, end_effector=None) -> bool:
         """
         笛卡尔空间轨迹跟踪（周期性发送目标位姿）
-        :param pos: 目标笛卡尔位姿 [x, y, z, qx, qy, qz, qw]
-        :param end_effector: 夹爪位置（单位：m）
-        :param tau: 夹爪力矩（单位：N）
+
+        :param pos: list, 目标笛卡尔位姿 [x, y, z, qx, qy, qz, qw]
+
+        :param end_effector: float, 夹爪位置（单位：m）
+
+        :param tau: float, 夹爪力矩（单位：N）
+
+        :return: bool, 是否成功发送
         """
         _pos = list(pos)
         if not self.__check_input_valid(_pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         
         # Normalize quaternion for track_pose
         if isinstance(_pos, list) and len(_pos) >= 7:
@@ -775,18 +884,22 @@ class Carm:
 
         return self.send_only(req)
 
-    def move_joint(self, pos, tm=-1, is_sync=True, tool=0):
+    def move_joint(self, pos, tm=-1, is_sync=True, tool=0) -> bool:
         """
         关节点的关节空间点到点运动
-        :param pos: 目标关节位置
-        :param tm: 运动时间（未使用，预留）
-        :param is_sync: 是否同步等待
-        :param tool: 工具号
+
+        :param pos: list, 目标关节位置
+
+        :param tm: float, 运动时间（未使用，预留）
+
+        :param is_sync: bool, 是否同步等待
+
+        :param tool: int, 工具号
         """
         if not self.__check_input_valid(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__clip_joints(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
+            return False
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -797,20 +910,24 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_pose(self, pos, tm=-1, is_sync=True, tool=0):
+    def move_pose(self, pos, tm=-1, is_sync=True, tool=0) -> bool:
         """
         笛卡尔点的关节空间点到点运动
-        :param pos: 目标位姿 [x, y, z, qx, qy, qz, qw]
-        :param tm: 运动时间（未使用，预留）
-        :param is_sync: 是否同步等待
-        :param tool: 工具号
+
+        :param pos: list, 目标位姿 [x, y, z, qx, qy, qz, qw]
+
+        :param tm: float, 运动时间（未使用，预留）
+
+        :param is_sync: bool, 是否同步等待
+
+        :param tool: int, 工具号
         """
         if not self.__check_input_valid(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__check_normalized(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return False
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -821,19 +938,22 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_line_pose(self, pos, is_sync=True, tool=0):
+    def move_line_pose(self, pos, is_sync=True, tool=0) -> bool:
         """
         笛卡尔点的空间直线运动
-        :param pos: 目标位姿 [x, y, z, qx, qy, qz, qw]
-        :param is_sync: 是否同步等待
-        :param tool: 工具号
+
+        :param pos: list, 目标位姿 [x, y, z, qx, qy, qz, qw]
+
+        :param is_sync: bool, 是否同步等待
+
+        :param tool: int, 工具号
         """
         if not self.__check_input_valid(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__check_normalized(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return False
         # 注意：这里传入的是笛卡尔位姿，point_type=1，直接发送位姿
         res = self.request({
             "command": "webRecieveTasks",
@@ -845,19 +965,22 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_line_joint(self, pos, is_sync=True, tool=0):
+    def move_line_joint(self, pos, is_sync=True, tool=0) -> bool:
         """
         关节点的空间直线运动
-        :param pos: 目标关节位置
-        :param is_sync: 是否同步等待
-        :param tool: 工具号
+
+        :param pos: list, 目标关节位置
+
+        :param is_sync: bool, 是否同步等待
+
+        :param tool: int, 工具号
         """
         if not self.__check_input_valid(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__clip_joints(pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
+            return False
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVL",
@@ -868,22 +991,28 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0):
+    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0) -> bool:
         """
         笛卡尔雅可比迭代运动（TASK_FLOW）
-        :param target_pos: 目标位姿 [x, y, z, qx, qy, qz, qw]
-        :param line_theta_weight: 位置与姿态的权重（0~1）
-        :param accuracy: 收敛精度
-        :param move_line: 是否直线运动
-        :param is_sync: 是否同步等待
-        :param tool: 工具号
+
+        :param target_pos: list, 目标位姿 [x, y, z, qx, qy, qz, qw]
+
+        :param line_theta_weight: float, 位置与姿态的权重（0~1）
+
+        :param accuracy: float, 收敛精度
+
+        :param move_line: bool, 是否直线运动
+
+        :param is_sync: bool, 是否同步等待
+
+        :param tool: int, 工具号
         """
         if not self.__check_input_valid(target_pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return False
         if not self.__check_normalized(target_pos):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+            return False
         line_theta_weight = self.__clip(line_theta_weight, 0, 1)
         accuracy = self.__clip(accuracy, 1e-6, 1.0)  # 最小精度限制，避免过小导致计算问题
         res = self.request({
@@ -905,32 +1034,37 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_toppra(self, targets, speed=100, tool=0, is_joint_val=True, is_sync=True):
+    def move_toppra(self, targets, speed=100, tool=0, is_joint_val=True, is_sync=True) -> bool:
         """
         基于 TOPPRA 的多点轨迹运动
-        :param targets: 目标轨迹点列表，关节位置列表或位姿列表 [x, y, z, qx, qy, qz, qw]
-        :param speed: 速度百分比
-        :param tool: 工具号
-        :param is_joint_val: True 表示关节空间目标，False 表示笛卡尔空间目标
-        :param is_sync: 是否同步等待
+
+        :param targets: list, 目标轨迹点列表，关节位置列表或位姿列表 [x, y, z, qx, qy, qz, qw]
+
+        :param speed: int, 速度百分比
+
+        :param tool: int, 工具号
+
+        :param is_joint_val: bool, True 表示关节空间目标，False 表示笛卡尔空间目标
+
+        :param is_sync: bool, 是否同步等待
         """
         if not targets:
-            return {'recv': 'Task_Refuse', 'errMsg': 'Targets cannot be empty'}
+            return False
         
         if not isinstance(targets[0], list):
             targets = [targets]
         
         for p in targets:
             if not self.__check_input_valid(p):
-                return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+                return False
             if is_joint_val:
                 if not self.__clip_joints(p):
-                    return {'recv': 'Task_Refuse', 'errMsg': 'Joint size error'}
+                    return False
             else:
                 if not self.__check_normalized(p):
-                    return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+                    return False
         
         req = {
             "command": "webRecieveTasks",
@@ -952,47 +1086,60 @@ class Carm:
         res = self.request(req)
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def move_joint_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True):
+    def move_joint_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True) -> bool:
         """
         关节轨迹运动（使用基于 TOPPRA 的轨迹规划）
-        :param target_traj: 目标关节位置轨迹列表
-        :param gripper_pos: 夹爪位置（暂不生效，预留）
-        :param stamps: 时间戳（不生效，TOPPRA 仅需要路径点）
-        :param is_sync: 是否同步等待
+
+        :param target_traj: list, 目标关节位置轨迹列表
+
+        :param gripper_pos: float, 夹爪位置（暂不生效，预留）
+
+        :param stamps: list, 时间戳（不生效，TOPPRA 仅需要路径点）
+
+        :param is_sync: bool, 是否同步等待
         """
         return self.move_toppra(target_traj, is_joint_val=True, is_sync=is_sync)
 
-    def move_pose_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True):
+    def move_pose_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True) -> bool:
         """
         位姿轨迹运动（使用基于 TOPPRA 的轨迹规划）
-        :param target_traj: 目标笛卡尔位姿轨迹列表
-        :param gripper_pos: 夹爪位置（暂不生效，预留）
-        :param stamps: 时间戳（不生效，TOPPRA 仅需要路径点）
-        :param is_sync: 是否同步等待
+
+        :param target_traj: list, 目标笛卡尔位姿轨迹列表
+
+        :param gripper_pos: float, 夹爪位置（暂不生效，预留）
+
+        :param stamps: list, 时间戳（不生效，TOPPRA 仅需要路径点）
+
+        :param is_sync: bool, 是否同步等待
         """
         return self.move_toppra(target_traj, is_joint_val=False, is_sync=is_sync)
 
     # -------------------- 示教接口 --------------------
-    def trajectory_teach(self, off_on, name=""):
+    def trajectory_teach(self, off_on, name="") -> bool:
         """
         开始/停止示教录制
-        :param off_on: True 开始录制，False 停止录制
-        :param name: 轨迹名称（如 "20250918175001.my_traj"）
+
+        :param off_on: bool, True 开始录制，False 停止录制
+
+        :param name: str, 轨迹名称（如 "20250918175001.my_traj"）
         """
-        return self.request({
+        res = self.request({
             "command": "teachRecorder",
             "arm_index": self.arm_index,
             "task_id": 1 if off_on else 0,
             "name": name
         })
+        return res.get("recv") == "Task_Recieve"
 
-    def trajectory_recorder(self, name, is_sync=True):
+    def trajectory_recorder(self, name, is_sync=True) -> bool:
         """
         复现指定名称的轨迹
-        :param name: 轨迹名称
-        :param is_sync: 是否同步等待
+
+        :param name: str, 轨迹名称
+
+        :param is_sync: bool, 是否同步等待
         """
         res = self.request({
             "command": "teachRecorder",
@@ -1002,12 +1149,13 @@ class Carm:
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
-        return res
+        return res.get("recv") == "Task_Recieve"
 
-    def check_teach(self):
+    def check_teach(self) -> list:
         """
         获取已录制的轨迹列表，只有正则匹配上的 '20250918175001.self_name.json' 才会被返回
-        :return: 轨迹列表的字符串数组
+
+        :return: list, 轨迹列表的字符串数组
         """
         res = self.request({
             "command": "teachRecorder",
@@ -1020,47 +1168,70 @@ class Carm:
         return []
 
     # -------------------- 运动学 --------------------
-    def inverse_kine(self, cart_pose, ref_joints, tool=0):
+    def inverse_kine(self, cart_pose, ref_joints, tool=0) -> list:
         """
         逆运动学求解
-        :param cart_pose: 目标位姿 [x, y, z, qx, qy, qz, qw]（单个或列表）
-        :param ref_joints: 参考关节角（单个或列表）
-        :param tool: 工具号
-        :return: 返回包含关节角的响应
+
+        :param cart_pose: list, 目标位姿 [x, y, z, qx, qy, qz, qw]（单个或列表）
+
+        :param ref_joints: list, 参考关节角（单个或列表）
+
+        :param tool: int, 工具号
+
+        :return: list, 成功时返回解析过的结果（单个一维列表或二维列表）逆解失败则返回该空列表，如果错误返回空列表
         """
         if not self.__check_input_valid(cart_pose) or not self.__check_input_valid(ref_joints):
-            return {'recv': 'Task_Refuse', 'errMsg': 'Input contains NaN or Inf'}
+            return []
 
+        is_list = True
         if not isinstance(cart_pose[0], list):
             cart_pose = [cart_pose]
             ref_joints = [ref_joints]
+            is_list = None
         assert len(cart_pose) == len(ref_joints)
 
         for p in cart_pose:
             if not self.__check_normalized(p):
-                return {'recv': 'Task_Refuse', 'errMsg': 'Quaternion not normalized'}
+                return []
         
         data = {"tool": tool, "point_cnt": len(cart_pose)}
         for i in range(len(ref_joints)):
             data[f"point{i+1}"] = cart_pose[i]
             data[f"refer{i+1}"] = ref_joints[i]
-        return self.request({
+            
+        ret = self.request({
             "command": "getKinematics",
             "task_id": "inverse",
             "arm_index": self.arm_index,
             "data": data
         })
+        try:
+            if ret.get("recv") == "Task_Recieve":
+                if is_list:
+                    joints = []
+                    for i in range(len(cart_pose)):
+                        joints.append(ret.get("data", {}).get(f"joint{i+1}", []))
+                    return joints
+                else:
+                    return ret.get("data", {}).get("joint1", [])
+            return []
+        except Exception as e:
+            print(f"Error parsing inverse_kine response: {e}")
+            return []
 
-    def forward_kine(self, joint_pos, tool=0):
+    def forward_kine(self, joint_pos, tool=0) -> list:
         """
         正运动学求解
-        :param joint_pos: 关节角（单个或列表）
-        :param tool: 工具号
-        :return: 位姿列表或单个位姿 [x, y, z, qx, qy, qz, qw]，失败返回 None
+
+        :param joint_pos: list, 关节角（单个或列表）
+
+        :param tool: int, 工具号
+
+        :return: list, 成功时返回解析过的结果（单个一维列表或二维列表）逆解失败则返回该空列表[x, y, z, qx, qy, qz, qw]，如果错误返回空列表
         """
         if not self.__check_input_valid(joint_pos):
             print(f"Error: forward_kine input contains NaN or Inf")
-            return None
+            return []
 
         is_list = True
         if not isinstance(joint_pos[0], list):
@@ -1070,7 +1241,7 @@ class Carm:
         for v in joint_pos:
             if not self.__clip_joints(v):
                 print(f"Error: forward_kine joint size error for {v}")
-                return None
+                return []
 
         data = {"tool": tool, "point_cnt": len(joint_pos)}
         for i in range(len(joint_pos)):
@@ -1082,37 +1253,41 @@ class Carm:
             "data": data
         })
         try:
-            if ret["recv"] == "Task_Recieve":
+            if ret.get("recv") == "Task_Recieve":
                 if is_list:
                     points = []
                     for i in range(len(joint_pos)):
-                        points.append(ret["data"][f"point{i+1}"])
+                        points.append(ret.get("data", {}).get(f"point{i+1}", []))
                     return points
                 else:
-                    return ret["data"]["point1"]
+                    return ret.get("data", {}).get("point1", [])
+            return []
         except Exception as e:
             print(f"Error parsing forward_kine response: {e}")
-            return None
+            return []
 
     # -------------------- 回调注册 --------------------
     def on_error(self, callback):
         """
         注册错误回调函数
-        :param callback: 函数签名 fn(error_info)
+
+        :param callback: callable, 函数签名 fn(error_info)
         """
         self.call_back["onCarmError"] = callback
 
     def on_task_finish(self, callback):
         """
         注册任务完成回调函数
-        :param callback: 函数签名 fn(task_key)
+
+        :param callback: callable, 函数签名 fn(task_key)
         """
         self.call_back["taskFinished"] = callback
 
     def on_update(self, callback):
         """
         注册状态更新回调函数
-        :param callback: 函数签名 fn(Unix_time)
+
+        :param callback: callable, 函数签名 fn(Unix_time)
         """
         self.call_back["updateRobotState"] = callback
 
@@ -1188,7 +1363,8 @@ class Carm:
                             
 
     def __cbk_taskfinish(self, message):
-        print(f"Task finished callback received: {message}")
+        # print(f"Task finished callback received: {message}")
+        pass
 
     def __cbk_error(self, message):
         print(f"Error callback received: {message}")
@@ -1205,11 +1381,11 @@ class Carm:
             try:
                 if self.is_connected():
                     res = self.get_limits()
-                    if res and "params" in res:
-                        self.limit = res["params"]
+                    if res:
+                        self.limit = res
                     eeff_res = self.get_eeff_config()
-                    if eeff_res and "params" in eeff_res:
-                        self.eeff_limit = eeff_res["params"]
+                    if eeff_res:
+                        self.eeff_limit = eeff_res
                 else: 
                     print("Not connected, skipping limits fetch.")
             except Exception as e:
