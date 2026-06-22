@@ -185,6 +185,7 @@ class Carm:
         获取关节限位、最大速度、加速度等参数。
         
         :return: dict 完整包含以下配置字段（可能依控制器的不同部分存在）：
+
                  - limit_lower: [list] 关节下限位 (rad)
                  - limit_upper: [list] 关节上限位 (rad)
                  - limit_vel: [list] 关节最大速度 (rad/s)
@@ -202,6 +203,7 @@ class Carm:
         获取末端执行器配置。
         
         :return: dict 完整包含以下末端配置字段：
+        
                  - eeff_dof: [int] 末端执行器自由度数量
                  - eeff_lower: [list] 末端下限位
                  - eeff_upper: [list] 末端上限位
@@ -730,7 +732,7 @@ class Carm:
             "index": tool
         })
         if res.get("recv") == "Task_Recieve":
-            return res.get("data", {}).get("point", [])
+            return res.get("coordinate", [])
         return []
 
     def set_collision_config(self, flag=True, level=10) -> bool:
