@@ -13,7 +13,7 @@ authors = [
 description = "Python interface for cvte arm."
 readme = "README.md"
 requires-python = ">=3.6"
-dependencies = ["websocket-client"]
+dependencies = ["websocket-client", "zeroconf"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -22,6 +22,7 @@ classifiers = [
 
 [project.scripts]
 carm_ros2 = "carm.carm_ros2:main"
+carm_scan = "carm.carm_scan:main"
 
 [tool.setuptools]
 packages = ["carm"]
@@ -31,4 +32,5 @@ carm = [
     "__init__.py",
     "carm.py",
     "carm_ros2.py",
+    "carm_scan.py",
 ]

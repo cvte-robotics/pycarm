@@ -541,19 +541,39 @@ robot.move_toppra([[0.1, -0.2, 0.3, 0, 0, 0], [0.2, -0.3, 0.4, 0, 0, 0]], is_joi
 
 #### `move_joint_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* 描述：关节轨迹连续运动（内部通过 `move_toppra` 实现）。
+* 描述：关节轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
 * 参数：
   * `target_traj` (list): 目标关节位置轨迹列表。
+  * `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效），与路点一一对应。
+  * `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
   * `is_sync` (bool): 是否阻塞等待完成。
-  * *(其他参数为兼容性预留，当前暂不生效)*
 
 #### `move_pose_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* 描述：位姿轨迹连续运动（内部通过 `move_toppra` 实现）。
+* 描述：位姿轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
 * 参数：
   * `target_traj` (list): 目标笛卡尔位姿轨迹列表。
+  * `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效）。
+  * `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
   * `is_sync` (bool): 是否阻塞等待完成。
-  * *(其他参数为兼容性预留，当前暂不生效)*
+
+#### `move_pvt(target_pos, gripper_pos=None, stamps=None, is_joint_val=True, is_sync=True)`
+
+* 描述：PVT（位置-速度-时间）模式运动，无需加入起始点，直接给目标点。
+* 参数：
+  * `target_pos` (list): 规划路点列表，每个路点为关节角或位姿。
+  * `gripper_pos` (list, optional): 夹爪位置列表，与路点一一对应，None 或空为不运动夹爪。
+  * `stamps` (list): 时间戳列表（秒），与路点一一对应，必须递增且大于0。
+  * `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
+  * `is_sync` (bool): 是否同步等待任务完成。
+
+**python**
+
+```python
+waypoints = [[0.1, -0.2, 0.3, 0, 0, 0], [0.2, -0.3, 0.4, 0, 0, 0]]
+stamps = [2.0, 4.0]
+robot.move_pvt(waypoints, stamps=stamps, is_joint_val=True)
+```
 
 ---
 
@@ -633,6 +653,158 @@ print("Cartesian pose:", pose)
 
 ---
 
+### 工具与诊断接口
+
+#### `ping(date=None)`
+
+* 描述：发送 ping 请求，用于测试通讯延时及带宽。
+* 参数：
+  * `date` (str, optional): 携带的数据载荷。
+* 返回：`dict`，包含 `Unix_resp`（接收时间戳）和 `data`（载荷）。
+
+#### `set_debug(flag=False)`
+
+* 描述：设置控制器进入 debug 仿真模式，该模式下不连接机械臂。
+* 参数：
+  * `flag` (bool): True 开启仿真模式，False 关闭。
+* 返回：`bool` 执行是否成功。
+
+---
+
+### 底层透传接口（Low-Level）
+
+底层透传接口提供伺服级的高速控制能力，适用于需要 1ms 级控制周期的场景。使用前需调用 `set_low_mode(True)` 进入底层模式。
+
+#### `set_low_mode(flag=True)`
+
+* 描述：设置底层透传模式。
+* 参数：
+  * `flag` (bool): True 开启，False 关闭。
+* 返回：`bool`
+
+#### 底层控制指令
+
+以下指令均返回 `(success: bool, low_state: dict)` 元组。执行后可通过 `@property` 获取最新底层状态。
+
+##### `low_pv_command(pos, vel)`
+
+* 描述：发送底层位置速度(PV)控制指令。
+* 参数：`pos` (list) 目标关节位置 (rad)，`vel` (list) 目标关节速度 (rad/s)。
+
+##### `low_mit_command(pos, vel, tau, kp, kd)`
+
+* 描述：发送底层 MIT 综合控制指令。
+* 参数：`pos`/`vel`/`tau`/`kp`/`kd` 均为 list，分别对应关节位置、速度、前馈力矩、刚度、阻尼。
+
+##### `low_pf_command(pos, vel, tau)`
+
+* 描述：发送底层位置力矩(PF)混合控制指令。
+
+##### `low_current_command(tau)`
+
+* 描述：发送底层力矩(Current)指令。
+* 参数：`tau` (list) 目标关节力矩 (N·m)。
+
+##### `low_refresh()`
+
+* 描述：主动刷新并获取底层硬件数据（无需下发控制指令）。
+
+##### `low_set_end_effector_ctr(pos, vel, tau)`
+
+* 描述：底层末端执行器控制指令。
+
+#### 底层配置指令
+
+##### `low_set_robot_mode(mode)`
+
+* 描述：设置机器人底层运行模式。
+
+##### `low_set_end_effector_mode(mode)`
+
+* 描述：设置末端执行器底层运行模式。
+
+##### `low_set_servo_enable(status)`
+
+* 描述：控制底层伺服上/下使能。
+* 参数：`status` (bool) True 上使能，False 下使能。
+
+##### `low_reset(cnt=5)`
+
+* 描述：进行底层错误复位操作。
+* 参数：`cnt` (int) 尝试复位的最大次数。
+
+#### 底层状态查询
+
+##### `low_get_servo_status()`
+
+* 描述：主动获取底层伺服级状态。
+* 返回：`dict`，包含 `mitKp`/`mitKd`/`pvVel`/`pfVel`/`isServoEnable`/`fsmMode`/`isConnected`/`mosTemperature`/`motorTemperature`/`motorVBus`/`motorErrorCode`/`motorErrorMsg` 等字段。
+
+##### `low_get_inverse_kine(pose, refer_pos, tool=-1)`
+
+* 描述：执行底层逆运动学闭式求解。
+* 返回：`(success, tool, joint_pos)` 元组。
+
+##### `low_get_forward_kine(joint_pos, tool=-1)`
+
+* 描述：执行底层正运动学计算。
+* 返回：`(success, tool, pose)` 元组。
+
+##### `low_get_dynamics(joint_pos, joint_vel, joint_acc)`
+
+* 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)分量。
+* 返回：`(success, tool, m_force, c_force, g_force)` 元组。
+
+##### `low_get_jacobian(joint_pos)`
+
+* 描述：获取底层雅可比矩阵。
+* 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表 `list[list[float]]`，形状 `(rows, cols)`。
+
+##### `low_get_nullspace(joint_pos, tolerance)`
+
+* 描述：获取底层零空间矩阵。
+* 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表。
+
+#### 底层状态属性（@property）
+
+执行底层控制指令后，可通过以下属性直接读取最新底层状态：
+
+**臂状态（来自 RobotStatus）：**
+
+* `low_error_code` / `low_error_msg`: 错误码和信息
+* `low_arm_connected` / `low_arm_enable`: 连接和使能状态
+* `low_arm_status` / `low_arm_mode`: 臂状态和模式
+
+**关节状态（来自 RobotState）：**
+
+* `low_joint_cmd_pos` / `low_joint_cmd_vel` / `low_joint_cmd_tau`: 指令值
+* `low_joint_pos` / `low_joint_vel` / `low_joint_tau`: 实际值
+
+**夹爪状态（来自 gripperStatus / gripperState）：**
+
+* `low_gripper_connected` / `low_gripper_enable` / `low_gripper_err_code` / `low_gripper_mode`
+* `low_gripper_cmd_pos` / `low_gripper_cmd_vel` / `low_gripper_cmd_tau`
+* `low_gripper_pos` / `low_gripper_vel` / `low_gripper_tau`
+
+**python**
+
+```python
+robot.set_low_mode(True)
+robot.low_set_servo_enable(True)
+robot.low_set_robot_mode(1)
+
+# PV 控制循环
+ok, state = robot.low_pv_command(target_pos, target_vel)
+print("实际关节位置:", robot.low_joint_pos)
+print("实际关节力矩:", robot.low_joint_tau)
+print("臂连接状态:", robot.low_arm_connected)
+
+robot.low_set_servo_enable(False)
+robot.set_low_mode(False)
+```
+
+---
+
 ### 回调注册
 
 #### `on_error(callback)`
@@ -686,7 +858,8 @@ robot.on_update(state_updated)
 
 * 所有请求都是同步阻塞的，除非 `is_sync=False` 的运动接口。
 * 状态属性（如 `joint_pos`）需在连接并收到状态更新后才能使用。
-* 某些高级功能（如 PVT 轨迹）尚未实现，但占位已预留。
+* 底层透传接口（`low_*`）使用前需先调用 `set_low_mode(True)` 进入底层模式，使用完毕后调用 `set_low_mode(False)` 退出。
+* 底层控制指令（`low_pv_command` 等）会自动对输入进行非法值检查、维度校验和限幅处理。
 
 ## 许可证
 

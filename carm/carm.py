@@ -8,6 +8,7 @@ import math
 class Carm:
     def __init__(self, addr="10.42.0.101", arm_index=0):
         self.state = None
+        self.low_state_data = None
         self.last_msg = None
         self.ws = None
         self.arm_index = arm_index
@@ -188,9 +189,10 @@ class Carm:
 
                  - limit_lower: [list] 关节下限位 (rad)
                  - limit_upper: [list] 关节上限位 (rad)
-                 - limit_vel: [list] 关节最大速度 (rad/s)
-                 - limit_acc: [list] 关节最大加速度 (rad/s^2)
-                 - limit_jerk: [list] 关节最大加加速度 (rad/s^3)
+                 - joint_vel: [list] 关节最大速度 (rad/s)
+                 - joint_acc: [list] 关节最大加速度 (rad/s^2)
+                 - joint_dec: [list] 关节最大减速度 (rad/s^2)
+                 - joint_jerk: [list] 关节最大加加速度 (rad/s^3)
         """
         res = self.request({
             "command": "getJointParams",
@@ -204,7 +206,9 @@ class Carm:
         
         :return: dict 完整包含以下末端配置字段：
         
-                 - eeff_dof: [int] 末端执行器自由度数量
+                 - dof: [int] 末端执行器自由度数量
+                 - eeff_name: [str] 末端执行器名称
+                 - eeff_type: [str] 末端执行器类型
                  - eeff_lower: [list] 末端下限位
                  - eeff_upper: [list] 末端上限位
                  - eeff_vel: [list] 末端最大速度
@@ -217,7 +221,9 @@ class Carm:
         if res.get("params") == None:
             if self.end_effector_type == "gripper":
                 res["params"] = {
-                    "eeff_dof": self.end_effector_dof,
+                    "dof": self.end_effector_dof,
+                    "eeff_name": self.end_effector_name,
+                    "eeff_type": self.end_effector_type,
                     "eeff_lower": [0.0]*self.end_effector_dof,
                     "eeff_upper": [0.077]*self.end_effector_dof,
                     "eeff_vel": [0.0]*self.end_effector_dof,
@@ -225,7 +231,9 @@ class Carm:
                 }
             elif self.end_effector_type == "hand":
                 res["params"] = {
-                    "eeff_dof": self.end_effector_dof,
+                    "dof": self.end_effector_dof,
+                    "eeff_name": self.end_effector_name,
+                    "eeff_type": self.end_effector_type,
                     "eeff_lower": [0.0]*self.end_effector_dof,
                     "eeff_upper": [255.0]*self.end_effector_dof,
                     "eeff_vel": [255.0]*self.end_effector_dof,
@@ -233,7 +241,9 @@ class Carm:
                 }
             else:
                 res["params"] = {
-                    "eeff_dof": self.end_effector_dof,
+                    "dof": self.end_effector_dof,
+                    "eeff_name": self.end_effector_name,
+                    "eeff_type": self.end_effector_type,
                     "eeff_lower": [0.0]*self.end_effector_dof,
                     "eeff_upper": [255.0]*self.end_effector_dof,
                     "eeff_vel": [255.0]*self.end_effector_dof,
@@ -599,6 +609,37 @@ class Carm:
         })
         return res.get("recv") == "Task_Recieve"
 
+    # def set_impedance_mode(self, mode=0) -> bool:
+    #     """
+    #     设置控制器阻抗控制模式
+
+    #     :param mode: int, 0-Joint impedance 关节阻抗模式, 1-Cartesian impedance 笛卡尔阻抗模式
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     mode = self.__clip(mode, 0, 1)
+    #     res = self.request({
+    #         "command": "setImpedanceMode",
+    #         "arm_index": self.arm_index,
+    #         "mode": mode
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def set_teleoperation_mode(self, mode=0) -> bool:
+    #     """
+    #     设置遥操作模式
+
+    #     :param mode: int, 主臂设为1, 从臂设为2, 退出0
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     res = self.request({
+    #         "command": "setTeleoperationMode",
+    #         "arm_index": self.arm_index,
+    #         "is_master": mode
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
+
     def set_passthrough_data(self, mode, can_id, data) -> tuple:
         """
         设置透传数据
@@ -735,6 +776,54 @@ class Carm:
             return res.get("coordinate", [])
         return []
 
+    # def set_tool_coordinate(self, index, coord) -> bool:
+    #     """
+    #     更新工具坐标系（工具末端相对法兰的位姿关系）
+
+    #     :param index: int, 工具号索引
+
+    #     :param coord: list, 笛卡尔坐标及姿态 [x, y, z, rx, ry, rz]，长度6
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     if not self.__check_input_valid(coord):
+    #         return False
+    #     res = self.request({
+    #         "command": "setToolData",
+    #         "operation": "update",
+    #         "index": index,
+    #         "arm_index": self.arm_index,
+    #         "data": {"coord": list(coord[:6])}
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def tool_calibtate(self, tool_index, pos) -> bool:
+    #     """
+    #     标定工具号
+
+    #     :param tool_index: int, 标定的工具号
+
+    #     :param pos: list, 标定位姿列表，每个元素为 [x, y, z, rx, ry, rz]；位置标定需至少4个点位，姿态标定需至少3个点位
+
+    #     :return: bool, 标定是否成功
+    #     """
+    #     if not pos:
+    #         return False
+    #     for p in pos:
+    #         if not self.__check_input_valid(p):
+    #             return False
+    #     res = self.request({
+    #         "command": "toolCalibrate",
+    #         "arm_index": self.arm_index,
+    #         "data": {
+    #             "tool_index": tool_index,
+    #             "pos": [list(p[:6]) for p in pos]
+    #         }
+    #     })
+    #     if res.get("recv") == "Task_Recieve":
+    #         return res.get("result") == "ok"
+    #     return False
+
     def set_collision_config(self, flag=True, level=10) -> bool:
         """
         设置碰撞检测
@@ -820,6 +909,20 @@ class Carm:
         })
         return res.get("recv") == "Task_Recieve"
 
+    def set_debug(self, flag=False) -> bool:
+        """
+        设置控制器进入debug仿真模式，该模式下不连接机械臂
+
+        :param flag: bool, True 开启仿真模式，False 关闭
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({
+            "command": "setDebugMode",
+            "trigger": flag
+        })
+        return res.get("recv") == "Task_Recieve"
+
     # -------------------- 运动接口 --------------------
     def track_joint(self, pos, end_effector=None) -> bool:
         """
@@ -885,6 +988,28 @@ class Carm:
             req["data"]["grp_point"] = end_effector
 
         return self.send_only(req)
+
+    # def set_redundancy_tau(self, redundancy_tau, gripper=0) -> bool:
+    #     """
+    #     遥操作发送冗余力矩
+
+    #     :param redundancy_tau: list, 冗余力矩列表
+
+    #     :param gripper: float, 夹爪力矩
+
+    #     :return: bool, 是否成功发送
+    #     """
+    #     if not self.__check_input_valid(redundancy_tau):
+    #         return False
+    #     if not self.__check_input_valid(gripper):
+    #         return False
+    #     return self.send_only({
+    #         "command": "setRedundancyTau",
+    #         "arm_index": self.arm_index,
+    #         "is_master": True,
+    #         "redundancy_tau": list(redundancy_tau),
+    #         "eeff_tau": gripper
+    #     })
 
     def move_joint(self, pos, tm=-1, is_sync=True, tool=0) -> bool:
         """
@@ -1090,33 +1215,336 @@ class Carm:
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
+    def move_pvt(self, target_pos, gripper_pos=None, stamps=None, is_joint_val=True, is_sync=True) -> bool:
+        """
+        PVT（位置-速度-时间）模式运动，无需加入起始点，直接给目标点
+
+        :param target_pos: list, 规划路点列表，每个路点为关节角或位姿（n × DOF 或 n × 7）
+
+        :param gripper_pos: list, 夹爪位置列表，与路点一一对应，None 或空为不运动夹爪
+
+        :param stamps: list, 时间戳列表（秒），与路点一一对应，必须递增且大于0
+
+        :param is_joint_val: bool, True 表示关节空间目标，False 表示笛卡尔空间目标
+
+        :param is_sync: bool, 是否同步等待任务完成
+
+        :return: bool, 执行是否成功
+        """
+        if not target_pos or not stamps:
+            return False
+        if len(target_pos) != len(stamps):
+            print("Error: move_pvt target_pos and stamps length mismatch")
+            return False
+        for p in target_pos:
+            if not self.__check_input_valid(p):
+                return False
+        for s in stamps:
+            if not self.__check_input_valid(s) or s <= 0:
+                print("Error: move_pvt stamps must be positive and increasing")
+                return False
+        req = {
+            "command": "webRecieveTasks",
+            "task_id": "TASK_PVT",
+            "task_level": "Task_General",
+            "arm_index": self.arm_index,
+            "point_type": {"space": 0 if is_joint_val else 1},
+            "data": {
+                "pos": [list(p) for p in target_pos],
+                "time": list(stamps)
+            },
+            "gripper": {"eeff_linkage": 0}
+        }
+        if gripper_pos:
+            if len(gripper_pos) != len(target_pos):
+                print("Error: move_pvt gripper_pos length mismatch")
+                return False
+            req["gripper"]["eeff_linkage"] = 1
+            req["gripper"]["eeffe_point"] = [max(0.0, min(0.08, g)) for g in gripper_pos]
+        res = self.request(req)
+        if is_sync and res.get("recv") == "Task_Recieve":
+            self.__wait_task(res.get("task_key"))
+        return res.get("recv") == "Task_Recieve"
+
     def move_joint_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True) -> bool:
         """
-        关节轨迹运动（使用基于 TOPPRA 的轨迹规划）
+        关节轨迹运动，stamps 为空时使用 TOPPA 路径规划，有值时使用 PVT 模式
 
         :param target_traj: list, 目标关节位置轨迹列表
 
-        :param gripper_pos: float, 夹爪位置（暂不生效，预留）
+        :param gripper_pos: list, 夹爪位置列表（仅 PVT 模式生效）
 
-        :param stamps: list, 时间戳（不生效，TOPPRA 仅需要路径点）
+        :param stamps: list, 时间戳列表（秒），None 或空时使用 TOPPA，有值时使用 PVT
 
         :param is_sync: bool, 是否同步等待
         """
+        if stamps:
+            return self.move_pvt(target_traj, gripper_pos=gripper_pos, stamps=stamps,
+                                 is_joint_val=True, is_sync=is_sync)
         return self.move_toppra(target_traj, is_joint_val=True, is_sync=is_sync)
 
     def move_pose_traj(self, target_traj, gripper_pos=None, stamps=None, is_sync=True) -> bool:
         """
-        位姿轨迹运动（使用基于 TOPPRA 的轨迹规划）
+        位姿轨迹运动，stamps 为空时使用 TOPPA 路径规划，有值时使用 PVT 模式
 
         :param target_traj: list, 目标笛卡尔位姿轨迹列表
 
-        :param gripper_pos: float, 夹爪位置（暂不生效，预留）
+        :param gripper_pos: list, 夹爪位置列表（仅 PVT 模式生效）
 
-        :param stamps: list, 时间戳（不生效，TOPPRA 仅需要路径点）
+        :param stamps: list, 时间戳列表（秒），None 或空时使用 TOPPA，有值时使用 PVT
 
         :param is_sync: bool, 是否同步等待
         """
+        if stamps:
+            return self.move_pvt(target_traj, gripper_pos=gripper_pos, stamps=stamps,
+                                 is_joint_val=False, is_sync=is_sync)
         return self.move_toppra(target_traj, is_joint_val=False, is_sync=is_sync)
+
+    # def move_joint_jog(self, joint_index, dir, speed) -> bool:
+    #     """
+    #     单轴点动，运动至限位停止运动，可配合 stop 接口提前停止
+
+    #     :param joint_index: int, 关节轴号，从0开始
+
+    #     :param dir: int, 方向，1-正向，-1-反向
+
+    #     :param speed: float, 速度百分比，（0，100]
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     res = self.request({
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_MOVJ_JOG",
+    #         "arm_index": self.arm_index,
+    #         "index": joint_index,
+    #         "dir": dir,
+    #         "data": {"speed": speed}
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def move_line_jog(self, space_index, dir, speed, tool=0) -> bool:
+    #     """
+    #     笛卡尔空间单轴点动
+
+    #     :param space_index: int, 空间维度标号，X:0，Y:1，Z:2，RX:3，RY:4，RZ:5
+
+    #     :param dir: int, 方向，1-正向，-1-反向
+
+    #     :param speed: float, 速度百分比，（0，100]
+
+    #     :param tool: int, 工具号，0-9
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     res = self.request({
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_MOVL_JOG",
+    #         "arm_index": self.arm_index,
+    #         "index": space_index,
+    #         "dir": dir,
+    #         "data": {"speed": speed, "acc": speed, "tool": tool}
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def move_3p_arc(self, arc_pos, speed=100, dir=True, angle=-1, tool=0, is_joint_val=True, is_sync=True) -> bool:
+    #     """
+    #     三点圆弧运动
+
+    #     :param arc_pos: list, 包含3个点的列表（关节位置或位姿）
+
+    #     :param speed: float, 速度百分比
+
+    #     :param dir: bool, 圆弧方向，True-正向，False-反向
+
+    #     :param angle: float, 圆弧角度，-1表示自动
+
+    #     :param tool: int, 工具号
+
+    #     :param is_joint_val: bool, 目标点是否为关节空间点
+
+    #     :param is_sync: bool, 是否同步等待
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     if len(arc_pos) != 3:
+    #         print("Error: move_3p_arc requires exactly 3 points")
+    #         return False
+    #     for p in arc_pos:
+    #         if not self.__check_input_valid(p):
+    #             return False
+    #         if is_joint_val:
+    #             if not self.__clip_joints(p):
+    #                 return False
+    #         else:
+    #             if not self.__check_normalized(p):
+    #                 return False
+    #     data = {
+    #         "speed": speed,
+    #         "acc": speed,
+    #         "type": 0,
+    #         "dir": 0 if dir else 1,
+    #         "tool": tool,
+    #         "points": [list(p) for p in arc_pos]
+    #     }
+    #     if angle > 0:
+    #         data["radian"] = angle
+    #     res = self.request({
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_MOVC",
+    #         "task_level": "Task_General",
+    #         "arm_index": self.arm_index,
+    #         "point_type": {"space": 0 if is_joint_val else 1},
+    #         "data": data
+    #     })
+    #     if is_sync and res.get("recv") == "Task_Recieve":
+    #         self.__wait_task(res.get("task_key"))
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def move_center_arc(self, arc_pos, speed=100, dir=True, angle=-1, tool=0, is_joint_val=True, is_sync=True) -> bool:
+    #     """
+    #     圆心圆弧运动（圆心、经过点、目标点）
+
+    #     :param arc_pos: list, 包含3个点的列表（圆心、经过点、目标点）
+
+    #     :param speed: float, 速度百分比
+
+    #     :param dir: bool, 圆弧方向，True-正向，False-反向
+
+    #     :param angle: float, 圆弧角度，-1表示自动
+
+    #     :param tool: int, 工具号
+
+    #     :param is_joint_val: bool, 目标点是否为关节空间点
+
+    #     :param is_sync: bool, 是否同步等待
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     if len(arc_pos) != 3:
+    #         print("Error: move_center_arc requires exactly 3 points")
+    #         return False
+    #     for p in arc_pos:
+    #         if not self.__check_input_valid(p):
+    #             return False
+    #         if is_joint_val:
+    #             if not self.__clip_joints(p):
+    #                 return False
+    #         else:
+    #             if not self.__check_normalized(p):
+    #                 return False
+    #     data = {
+    #         "speed": speed,
+    #         "acc": speed,
+    #         "type": 1,
+    #         "dir": 0 if dir else 1,
+    #         "tool": tool,
+    #         "points": [list(p) for p in arc_pos]
+    #     }
+    #     if angle > 0:
+    #         data["radian"] = angle
+    #     res = self.request({
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_MOVC",
+    #         "task_level": "Task_General",
+    #         "arm_index": self.arm_index,
+    #         "point_type": {"space": 0 if is_joint_val else 1},
+    #         "data": data
+    #     })
+    #     if is_sync and res.get("recv") == "Task_Recieve":
+    #         self.__wait_task(res.get("task_key"))
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def move_jump(self, target_cart_pos, start_jump_height, end_jump_height, speed=100, tool=0, is_sync=True) -> bool:
+    #     """
+    #     跳跃运动（门字形轨迹）
+
+    #     :param target_cart_pos: list, 目标位姿 [x, y, z, qx, qy, qz, qw]
+
+    #     :param start_jump_height: list, 起始点起跳高度偏移 [dx, dy, dz]
+
+    #     :param end_jump_height: list, 目标点落点高度偏移 [dx, dy, dz]
+
+    #     :param speed: float, 速度百分比
+
+    #     :param tool: int, 工具号
+
+    #     :param is_sync: bool, 是否同步等待
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     if not self.__check_input_valid(target_cart_pos):
+    #         return False
+    #     if not self.__check_normalized(target_cart_pos):
+    #         return False
+    #     # 构造门字形路径点：当前位置 → 起跳 → 目标上方 → 目标
+    #     # 先获取当前位姿作为起点
+    #     current = self.cart_pose
+    #     if not current or len(current) != 7:
+    #         print("Error: move_jump cannot get current cart_pose")
+    #         return False
+    #     p0 = list(current)
+    #     p1 = [p0[i] + start_jump_height[i] for i in range(3)] + p0[3:]
+    #     p2 = list(target_cart_pos)
+    #     p3 = [target_cart_pos[i] + end_jump_height[i] for i in range(3)] + list(target_cart_pos[3:])
+    #     targets = [p0, p1, p3, p2]
+    #     return self.move_toppra(targets, speed=speed, tool=tool, is_joint_val=False, is_sync=is_sync)
+
+    # def move_directly(self, target_traj, gripper_pos=None, is_sync=True) -> bool:
+    #     """
+    #     直接运行已规划好的关节轨迹
+
+    #     :param target_traj: list, 目标轨迹列表（二维列表，每行一个关节位置点）
+
+    #     :param gripper_pos: list, 夹爪位置列表（可选，与轨迹点一一对应）
+
+    #     :param is_sync: bool, 是否同步等待
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     if not target_traj:
+    #         return False
+    #     for p in target_traj:
+    #         if not self.__check_input_valid(p):
+    #             return False
+    #     req = {
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_MOVD",
+    #         "task_level": "Task_General",
+    #         "arm_index": self.arm_index,
+    #         "target_points": [list(p) for p in target_traj],
+    #         "gripper": {"eeff_linkage": 0}
+    #     }
+    #     if gripper_pos:
+    #         req["gripper"]["eeff_linkage"] = 1
+    #         req["gripper"]["eeffe_point"] = [[max(0.0, min(0.08, g))] for g in gripper_pos]
+    #     res = self.request(req)
+    #     if is_sync and res.get("recv") == "Task_Recieve":
+    #         self.__wait_task(res.get("task_key"))
+    #     return res.get("recv") == "Task_Recieve"
+
+    # def move_delay(self, delay_ms, priority=0, is_sync=True) -> bool:
+    #     """
+    #     延迟任务，机器人保持非standby状态但静止
+
+    #     :param delay_ms: float, 延迟时间（毫秒）
+
+    #     :param priority: int, 优先级，0-一般，1-高
+
+    #     :param is_sync: bool, 是否同步等待
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     task_level = "Task_Override" if priority == 1 else "Task_General"
+    #     res = self.request({
+    #         "command": "webRecieveTasks",
+    #         "task_id": "TASK_TIMER",
+    #         "task_level": task_level,
+    #         "arm_index": self.arm_index,
+    #         "data": {"time": delay_ms}
+    #     })
+    #     if is_sync and res.get("recv") == "Task_Recieve":
+    #         self.__wait_task(res.get("task_key"))
+    #     return res.get("recv") == "Task_Recieve"
 
     # -------------------- 示教接口 --------------------
     def trajectory_teach(self, off_on, name="") -> bool:
@@ -1168,6 +1596,26 @@ class Carm:
         if res.get("recv") == "Task_Recieve" and res.get("teach_list"):
             return res["teach_list"]
         return []
+
+    # def set_traj_recorder(self, traj_record_flag) -> bool:
+    #     """
+    #     打开和关闭实际运行状态记录功能，包括位置和力矩，用于动力学参数辨识
+
+    #     :param traj_record_flag: int, 记录模式：
+    #         -1: 关闭轨迹记录
+    #          0: 用于拖动示教，保存关节角
+    #          1: 用于动力学参数辨识，保存关节角和力矩
+    #          2: 用于检查动力学参数是否正确，保存计算力矩和反馈力矩
+    #          3: 记录关节插补轨迹和反馈实际轨迹，用于验证轨迹跟随情况
+
+    #     :return: bool, 执行是否成功
+    #     """
+    #     res = self.request({
+    #         "command": "setTrajRecorder",
+    #         "arm_index": self.arm_index,
+    #         "toRecord": traj_record_flag
+    #     })
+    #     return res.get("recv") == "Task_Recieve"
 
     # -------------------- 运动学 --------------------
     def inverse_kine(self, cart_pose, ref_joints, tool=0) -> list:
@@ -1268,6 +1716,78 @@ class Carm:
             print(f"Error parsing forward_kine response: {e}")
             return []
 
+    # -------------------- 标定 / 自研臂接口 --------------------
+    # def set_zero_position(self, axis_id) -> bool:
+    #     """
+    #     设置自研臂的零位（仅自研臂有效）
+
+    #     :param axis_id: int, 关节轴号
+
+    #     :return: bool, 控制器返回值，True 表示成功
+    #     """
+    #     res = self.request({
+    #         "command": "setZeroPosition",
+    #         "arm_index": self.arm_index,
+    #         "axis_id": axis_id
+    #     })
+    #     if res.get("recv") == "Task_Recieve":
+    #         return res.get("ret", -1) == 1
+    #     return False
+
+    # def check_dm_motor_id(self) -> list:
+    #     """
+    #     检查 DM 电机 ID（仅自研臂有效）
+
+    #     :return: list, 电机 ID 列表，失败返回 [-1]
+    #     """
+    #     res = self.request({
+    #         "command": "checkDmMotorId",
+    #         "arm_index": self.arm_index
+    #     })
+    #     if res.get("recv") == "Task_Recieve":
+    #         return res.get("ret", [-1])
+    #     return [-1]
+
+    # def set_dynamics_cali_record_flag(self) -> int:
+    #     """
+    #     动力学参数辨识数据记录
+
+    #     :return: int, 控制器返回值，1 表示成功
+    #     """
+    #     res = self.request({
+    #         "command": "dynamicsCalibration",
+    #         "operation": "record"
+    #     })
+    #     if res.get("recv") == "Task_Recieve":
+    #         return res.get("ret", -1) == 1
+    #     return False
+
+    # def set_dynamics_cali_calcu(self, is_payload=False, tool_index=0) -> int:
+    #     """
+    #     动力学参数辨识计算
+
+    #     :param is_payload: bool, True 表示辨识负载参数，False 表示辨识臂参数
+
+    #     :param tool_index: int, 工具号，辨识负载时工具号需大于5
+
+    #     :return: int, 控制器返回值，1 表示成功
+    #     """
+    #     req = {
+    #         "command": "dynamicsCalibration",
+    #         "arm_index": self.arm_index,
+    #         "operation": "calibrate",
+    #         "type": "payload" if is_payload else "arm"
+    #     }
+    #     if is_payload:
+    #         if tool_index < 5:
+    #             print("Error: payload tool_index must be >= 5")
+    #             return -1
+    #         req["tool_index"] = tool_index
+    #     res = self.request(req)
+    #     if res.get("recv") == "Task_Recieve":
+    #         return res.get("ret", -1) == 1
+    #     return False
+
     # -------------------- 回调注册 --------------------
     def on_error(self, callback):
         """
@@ -1342,14 +1862,17 @@ class Carm:
 
         # 全局错误解析
         if message.get("error", 0) != 0 or message.get("errMsg", ""):
-            error_info = {
-                "command": "onCarmError",
-                "error": message.get("error"),
-                "errMsg": message.get("errMsg"),
-                "error_arm_index": message.get("error_arm_index", -1)
-            }
-            self.call_back.get("onCarmError", lambda msg: None)(error_info)
-            self.__abort_all_tasks()  # 中断所有等待
+            error_arm_index = message.get("error_arm_index", -1)
+            error_all_arm = message.get("error_all_arm", False)
+            if error_arm_index == self.arm_index or error_all_arm:
+                error_info = {
+                    "command": "onCarmError",
+                    "error": message.get("error"),
+                    "errMsg": message.get("errMsg"),
+                    "error_arm_index": error_arm_index
+                }
+                self.call_back.get("onCarmError", lambda msg: None)(error_info)
+                self.__abort_all_tasks()
 
         # 任务完成解析（只处理当前臂）
         if len(message["arm"]) > self.arm_index:
@@ -1484,6 +2007,19 @@ class Carm:
         for i, v in enumerate(joints):
             joints[i] = self.__clip(v, lower[i], upper[i])
         return True
+
+    def __clip_joints_vel(self, joints_vel):
+        if not self.limit:
+            return True
+            
+        vmax = self.limit.get('joint_vel', [])
+
+        if len(vmax) != len(joints_vel):
+            return False
+
+        for i, v in enumerate(joints_vel):
+            joints_vel[i] = self.__clip(v, -vmax[i], vmax[i])
+        return True
     
     def __clip_eeff(self, dof, eeff_pos, eeff_vel, eeff_tau):
         def auto_pad(lst, target_len, default_val=0.0):
@@ -1501,7 +2037,7 @@ class Carm:
         if not self.eeff_limit:
             return True
         
-        if dof != self.eeff_limit.get("eeff_dof", 0):
+        if dof != self.eeff_limit.get("dof", 0):
             return False
 
         lower = self.eeff_limit.get("eeff_lower", [])
@@ -1589,6 +2125,469 @@ class Carm:
             ws_instance.close()
         except Exception:
             pass
+
+    # -------------------- 底层透传接口 --------------------
+    @property
+    def _low_state(self):
+        """底层硬件数据响应"""
+        src = self.low_state_data if self.low_state_data else {}
+        self._low_data = {
+            "RobotStatus": src.get("RobotStatus", {
+                "error_code": 0, "error_msg": "",
+                "arm_connected": False, "arm_enable": False,
+                "arm_status": 0, "arm_mode": -1,
+            }),
+            "RobotState": src.get("RobotState", {
+                "joint_cmd_pos": [], "joint_cmd_vel": [], "joint_cmd_tau": [],
+                "joint_pos": [], "joint_vel": [], "joint_tau": [],
+            }),
+            "gripperStatus": src.get("gripperStatus", {
+                "gripper_error_code": 0, "gripper_error_msg": "",
+                "gripper_connected": False, "gripper_enable": False,
+                "gripper_status": 0, "gripper_mode": -1,
+            }),
+            "gripperState": src.get("gripperState", {
+                "gripper_cmd_pos": 0.0, "gripper_cmd_vel": 0.0, "gripper_cmd_tau": 0.0,
+                "gripper_pos": 0.0, "gripper_vel": 0.0, "gripper_tau": 0.0,
+            }),
+        }
+        return self._low_data
+
+    @property
+    def low_status(self):
+        """底层 RobotStatus 子字典"""
+        return self._low_state.get("RobotStatus", {})
+
+    @property
+    def low_state(self):
+        """底层 RobotState 子字典"""
+        return self._low_state.get("RobotState", {})
+
+    @property
+    def low_gripper_status(self):
+        """底层 gripperStatus 子字典"""
+        return self._low_state.get("gripperStatus", {})
+
+    @property
+    def low_gripper_state(self):
+        """底层 gripperState 子字典"""
+        return self._low_state.get("gripperState", {})
+
+    @property
+    def low_error_code(self):
+        """底层错误码"""
+        return self.low_status.get("error_code", 0)
+
+    @property
+    def low_error_msg(self):
+        """底层错误信息"""
+        return self.low_status.get("error_msg", "")
+
+    @property
+    def low_arm_connected(self):
+        """底层臂连接状态"""
+        return self.low_status.get("arm_connected", False)
+
+    @property
+    def low_arm_enable(self):
+        """底层臂使能状态"""
+        return self.low_status.get("arm_enable", False)
+
+    @property
+    def low_arm_status(self):
+        """底层臂状态"""
+        return self.low_status.get("arm_status", 0)
+
+    @property
+    def low_arm_mode(self):
+        """底层臂模式"""
+        return self.low_status.get("arm_mode", -1)
+
+    @property
+    def low_joint_cmd_pos(self):
+        """底层关节指令位置 (rad)"""
+        return self.low_state.get("joint_cmd_pos", [])
+
+    @property
+    def low_joint_cmd_vel(self):
+        """底层关节指令速度 (rad/s)"""
+        return self.low_state.get("joint_cmd_vel", [])
+
+    @property
+    def low_joint_cmd_tau(self):
+        """底层关节指令力矩 (N·m)"""
+        return self.low_state.get("joint_cmd_tau", [])
+
+    @property
+    def low_joint_pos(self):
+        """底层关节实际位置 (rad)"""
+        return self.low_state.get("joint_pos", [])
+
+    @property
+    def low_joint_vel(self):
+        """底层关节实际速度 (rad/s)"""
+        return self.low_state.get("joint_vel", [])
+
+    @property
+    def low_joint_tau(self):
+        """底层关节实际力矩 (N·m)"""
+        return self.low_state.get("joint_tau", [])
+
+    @property
+    def low_gripper_cmd_pos(self):
+        """底层夹爪指令位置"""
+        return self.low_gripper_state.get("gripper_cmd_pos", 0.0)
+
+    @property
+    def low_gripper_cmd_vel(self):
+        """底层夹爪指令速度"""
+        return self.low_gripper_state.get("gripper_cmd_vel", 0.0)
+
+    @property
+    def low_gripper_cmd_tau(self):
+        """底层夹爪指令力矩"""
+        return self.low_gripper_state.get("gripper_cmd_tau", 0.0)
+
+    @property
+    def low_gripper_pos(self):
+        """底层夹爪实际位置"""
+        return self.low_gripper_state.get("gripper_pos", 0.0)
+
+    @property
+    def low_gripper_vel(self):
+        """底层夹爪实际速度"""
+        return self.low_gripper_state.get("gripper_vel", 0.0)
+
+    @property
+    def low_gripper_tau(self):
+        """底层夹爪实际力矩"""
+        return self.low_gripper_state.get("gripper_tau", 0.0)
+
+    @property
+    def low_gripper_connected(self):
+        """底层夹爪连接状态"""
+        return self.low_gripper_status.get("gripper_connected", False)
+
+    @property
+    def low_gripper_enable(self):
+        """底层夹爪使能状态"""
+        return self.low_gripper_status.get("gripper_enable", False)
+
+    @property
+    def low_gripper_err_code(self):
+        """底层夹爪错误码"""
+        return self.low_gripper_status.get("gripper_error_code", 0)
+
+    @property
+    def low_gripper_mode(self):
+        """底层夹爪模式"""
+        return self.low_gripper_status.get("gripper_mode", -1)
+
+    def set_low_mode(self, flag=True) -> bool:
+        """
+        设置底层透传模式
+
+        :param flag: bool, True 开启底层透传模式，False 关闭
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({"command": "setLowMode", "arm_index": self.arm_index, "flag": flag})
+        return res.get("recv") == "Task_Recieve"
+
+    def low_pv_command(self, pos, vel) -> tuple:
+        """
+        发送底层位置速度(PV)控制指令并获取硬件状态
+
+        :param pos: list, 目标关节位置 (rad)
+
+        :param vel: list, 目标关节速度 (rad/s)
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        if not self.__check_input_valid(pos) or not self.__check_input_valid(vel):
+            return False, self._low_state
+        pos, vel = list(pos), list(vel)
+        if not self.__clip_joints(pos):
+            return False, self._low_state
+        if not self.__clip_joints_vel(vel):
+            return False, self._low_state
+        res = self.request({"command": "PVCommand", "arm_index": self.arm_index,
+                           "joint_pos": pos, "joint_vel": vel})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_mit_command(self, pos, vel, tau, kp, kd) -> tuple:
+        """
+        发送底层MIT综合控制指令并获取硬件状态
+
+        :param pos: list, 目标关节位置 (rad)
+
+        :param vel: list, 目标关节速度 (rad/s)
+
+        :param tau: list, 目标前馈力矩 (N·m)
+
+        :param kp: list, 关节刚度参数
+
+        :param kd: list, 关节阻尼参数
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        if not self.__check_input_valid(pos) or not self.__check_input_valid(vel):
+            return False, self._low_state
+        if not self.__check_input_valid(tau) or not self.__check_input_valid(kp) or not self.__check_input_valid(kd):
+            return False, self._low_state
+        pos, vel = list(pos), list(vel)
+        if not self.__clip_joints(pos):
+            return False, self._low_state
+        if not self.__clip_joints_vel(vel):
+            return False, self._low_state
+        dof = self.arm_dof
+        for name, arr in [("tau", tau), ("kp", kp), ("kd", kd)]:
+            if dof and len(arr) != dof:
+                print(f"Error: {name} 维度({len(arr)})与臂自由度({dof})不一致")
+                return False, self._low_state
+        res = self.request({"command": "MITCommand", "arm_index": self.arm_index,
+                           "joint_pos": pos, "joint_vel": vel,
+                           "joint_tau": list(tau), "Kp": list(kp), "Kd": list(kd)})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_pf_command(self, pos, vel, tau) -> tuple:
+        """
+        发送底层位置力矩(PF)混合控制指令并获取硬件状态
+
+        :param pos: list, 目标关节位置 (rad)
+
+        :param vel: list, 目标关节速度 (rad/s)
+
+        :param tau: list, 目标前馈力矩 (N·m)
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        if not self.__check_input_valid(pos) or not self.__check_input_valid(vel) or not self.__check_input_valid(tau):
+            return False, self._low_state
+        pos, vel = list(pos), list(vel)
+        if not self.__clip_joints(pos):
+            return False, self._low_state
+        if not self.__clip_joints_vel(vel):
+            return False, self._low_state
+        dof = self.arm_dof
+        for name, arr in [("tau", tau)]:
+            if dof and len(arr) != dof:
+                print(f"Error: {name} 维度({len(arr)})与臂自由度({dof})不一致")
+                return False, self._low_state
+        res = self.request({"command": "PFCommand", "arm_index": self.arm_index,
+                           "joint_pos": pos, "joint_vel": vel, "joint_tau": list(tau)})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_current_command(self, tau) -> tuple:
+        """
+        发送底层力矩(Current)指令并获取硬件状态
+
+        :param tau: list, 目标关节力矩 (N·m)
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        if not self.__check_input_valid(tau):
+            return False, self._low_state
+        dof = self.arm_dof
+        if dof and len(tau) != dof:
+            print(f"Error: tau 维度({len(tau)})与臂自由度({dof})不一致")
+            return False, self._low_state
+        res = self.request({"command": "CURRENTCommand", "arm_index": self.arm_index,
+                           "joint_tau": list(tau)})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_refresh(self) -> tuple:
+        """
+        主动刷新并获取当前最新的一帧底层硬件数据（无需下发控制指令）
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        res = self.request({"command": "Refresh", "arm_index": self.arm_index})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_set_end_effector_ctr(self, pos, vel, tau) -> tuple:
+        """
+        底层末端执行器（如夹爪等）控制指令
+
+        :param pos: list, 目标位置
+
+        :param vel: list, 目标速度
+
+        :param tau: list, 目标力矩/力
+
+        :return: tuple, (success: bool, low_state: dict)
+        """
+        if not self.__check_input_valid(pos) or not self.__check_input_valid(vel) or not self.__check_input_valid(tau):
+            return False, self._low_state
+        pos, vel, tau = list(pos), list(vel), list(tau)
+        dof = max(len(pos), len(vel), len(tau))
+        if not self.__clip_eeff(dof, pos, vel, tau):
+            return False, self._low_state
+        res = self.request({"command": "setEndEffectorCtr", "arm_index": self.arm_index,
+                           "eeff_pos": pos, "eeff_vel": vel, "eeff_tau": tau})
+        self.low_state_data = res
+        return res.get("recv") == "Task_Recieve", self._low_state
+
+    def low_set_robot_mode(self, mode) -> bool:
+        """
+        设置机器人底层的运行模式
+
+        :param mode: int, 模式枚举值
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({"command": "setRobotMode", "arm_index": self.arm_index, "mode": mode})
+        return res.get("recv") == "Task_Recieve"
+
+    def low_set_end_effector_mode(self, mode) -> bool:
+        """
+        设置末端执行器底层运行模式
+
+        :param mode: int, 模式枚举值
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({"command": "setEndEffectorMode", "arm_index": self.arm_index, "mode": mode})
+        return res.get("recv") == "Task_Recieve"
+
+    def low_set_servo_enable(self, status) -> bool:
+        """
+        控制底层伺服上/下使能
+
+        :param status: bool, True 为上使能，False 为下使能
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({"command": "setEnable", "arm_index": self.arm_index, "status": status})
+        return res.get("recv") == "Task_Recieve"
+
+    def low_reset(self, cnt=5) -> bool:
+        """
+        进行底层错误复位操作
+
+        :param cnt: int, 尝试复位的最大次数，默认5次
+
+        :return: bool, 执行是否成功
+        """
+        res = self.request({"command": "reset", "arm_index": self.arm_index, "cnt": cnt})
+        return res.get("recv") == "Task_Recieve"
+
+    def low_get_servo_status(self) -> dict:
+        """
+        主动获取底层伺服级状态，包括连接状态、温度、模式等详情信息
+
+        :return: dict, 伺服状态字典，包含 mitKp/mitKd/pvVel/pfVel/isServoEnable/fsmMode/
+                 isConnected/mosTemperature/motorTemperature/motorVBus/motorErrorCode/motorErrorMsg 等字段，
+                 失败返回空字典
+        """
+        res = self.request({"command": "getServoStatus", "arm_index": self.arm_index})
+        if res.get("recv") == "Task_Recieve":
+            return res.get("ServoStatus", {})
+        return {}
+
+    def low_get_inverse_kine(self, pose, refer_pos, tool=-1) -> tuple:
+        """
+        执行底层逆运动学闭式求解
+
+        :param pose: list, 目标笛卡尔空间位姿 [x, y, z, qx, qy, qz, qw]
+
+        :param refer_pos: list, 参考关节角度（多解情况下选优基准）
+
+        :param tool: int, 工具号或坐标系编号，默认 -1 表示当前使用的工具号
+
+        :return: tuple, (success: bool, tool: int, joint_pos: list)，求解出的目标关节角度
+        """
+        req = {"command": "getInverseKine", "arm_index": self.arm_index,
+               "pose": list(pose), "refer_pos": list(refer_pos)}
+        if tool >= 0:
+            req["tool"] = tool
+        res = self.request(req)
+        if res.get("recv") == "Task_Recieve":
+            return True, res.get("tool", tool), res.get("joint_pos", [])
+        return False, 0, []
+
+    def low_get_forward_kine(self, joint_pos, tool=-1) -> tuple:
+        """
+        执行底层正运动学计算
+
+        :param joint_pos: list, 关节角度组合
+
+        :param tool: int, 工具号或坐标系编号，默认 -1 表示当前使用的工具号
+
+        :return: tuple, (success: bool, tool: int, pose: list)，求解出的笛卡尔位姿 [x, y, z, qx, qy, qz, qw]
+        """
+        req = {"command": "getForwardKine", "arm_index": self.arm_index, "joint_pos": list(joint_pos)}
+        if tool >= 0:
+            req["tool"] = tool
+        res = self.request(req)
+        if res.get("recv") == "Task_Recieve":
+            return True, res.get("tool", tool), res.get("pose", [])
+        return False, 0, []
+
+    def low_get_dynamics(self, joint_pos, joint_vel, joint_acc) -> tuple:
+        """
+        利用底层动力学库计算机器人惯性矩阵(M)、科里奥利力与离心力(C)、重力(G)分量
+
+        :param joint_pos: list, 关节角度
+
+        :param joint_vel: list, 关节角速度
+
+        :param joint_acc: list, 关节角加速度
+
+        :return: tuple, (success: bool, tool: int, m_force: list, c_force: list, g_force: list)
+        """
+        res = self.request({"command": "getDynamics", "arm_index": self.arm_index,
+                           "joint_pos": list(joint_pos), "joint_vel": list(joint_vel),
+                           "joint_acc": list(joint_acc)})
+        if res.get("recv") == "Task_Recieve":
+            return True, res.get("tool", 0), res.get("m_force", []), res.get("c_force", []), res.get("g_force", [])
+        return False, 0, [], [], []
+
+    def low_get_jacobian(self, joint_pos) -> tuple:
+        """
+        获取底层雅可比矩阵(Jacobian)
+
+        :param joint_pos: list, 当前关节角度
+
+        :return: tuple, (success: bool, tool: int, matrix: list[list[float]])，
+                 matrix 为二维列表，形状 (rows, cols)，即 matrix[i][j] 表示第 i 行第 j 列元素；
+                 失败返回 (False, 0, [])
+        """
+        res = self.request({"command": "getJacobian", "arm_index": self.arm_index,
+                           "joint_pos": list(joint_pos)})
+        if res.get("recv") == "Task_Recieve":
+            rows = res.get("rows", 0)
+            cols = res.get("cols", 0)
+            flat = res.get("jacobian", [])
+            matrix = [flat[i * cols:(i + 1) * cols] for i in range(rows)] if rows and cols else []
+            return True, res.get("tool", 0), matrix
+        return False, 0, []
+
+    def low_get_nullspace(self, joint_pos, tolerance) -> tuple:
+        """
+        获取底层零空间(Nullspace)矩阵
+
+        :param joint_pos: list, 当前关节角度
+
+        :param tolerance: float, 求解公差值
+
+        :return: tuple, (success: bool, tool: int, matrix: list[list[float]])，
+                 matrix 为二维列表，形状 (rows, cols)；失败返回 (False, 0, [])
+        """
+        res = self.request({"command": "getNullspace", "arm_index": self.arm_index,
+                           "joint_pos": list(joint_pos), "tolerance": tolerance})
+        if res.get("recv") == "Task_Recieve":
+            rows = res.get("rows", 0)
+            cols = res.get("cols", 0)
+            flat = res.get("nullspace", [])
+            matrix = [flat[i * cols:(i + 1) * cols] for i in range(rows)] if rows and cols else []
+            return True, res.get("tool", 0), matrix
+        return False, 0, []
 
 
 if __name__ == "__main__":
