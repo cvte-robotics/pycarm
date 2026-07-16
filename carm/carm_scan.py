@@ -3,7 +3,6 @@ from tkinter import ttk, messagebox
 import threading
 import socket
 import json
-import time
 from zeroconf import Zeroconf, ServiceBrowser, ServiceStateChange
 
 SERVICE_TYPE = "_carm._tcp.local."
@@ -53,6 +52,7 @@ class CarmScanApp:
         self.rename_btn.pack(side=tk.LEFT)
 
     def start_scan(self):
+        """启动 mDNS 浏览"""
         self.devices.clear()
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -62,7 +62,7 @@ class CarmScanApp:
             
         self.zeroconf = Zeroconf()
         self.browser = ServiceBrowser(self.zeroconf, SERVICE_TYPE, handlers=[self.on_service_state_change])
-        tk.messagebox.showinfo("Scan", "Scanning started. Devices will appear in the list.")
+        print(f"[mDNS] 开始监听 {SERVICE_TYPE} ...")
 
     def on_service_state_change(self, zeroconf, service_type, name, state_change):
         print(f"[mDNS] event={state_change} name={name}")
@@ -96,7 +96,8 @@ class CarmScanApp:
         for item in self.tree.get_children():
             self.tree.delete(item)
         for name, info in self.devices.items():
-            self.tree.insert("", "end", iid=name, values=(info["name"], info["server"], info["ip"], info["port"]))
+            self.tree.insert("", "end", iid=name,
+                             values=(info["name"], info["server"], info["ip"], info["port"]))
 
     def on_select(self, event):
         selected = self.tree.selection()

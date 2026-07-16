@@ -2,6 +2,12 @@
 
 Python interface for cvte arm.
 
+本包提供三层接口：
+
+* **`Carm`** — 底层 WebSocket 内核（`carm_kernel.py`），基于属性和简单回调的轻量级接口。
+* **`CArmSingleCol`** — 单臂包装类（`carm.py`），方法签名与返回值与 C++ `CArmSingleCol`（`carm_cobot.h`）完全对齐，共 93 个公共接口。
+* **`CArmDualBot`** — 双臂包装类（`carm.py`），组合两个 `CArmSingleCol`，方法签名与 C++ `CArmDualBot`（`carm_dual.h`）完全对齐，共 161 个公共接口。
+
 # Install
 
 ```
@@ -9,6 +15,8 @@ pip install carm
 ```
 
 # Usage
+
+## 快速开始 — 底层 Carm 内核
 
 ```
 import carm
@@ -28,6 +36,48 @@ carm.track_pose(carm.cart_pose)
 carm.move_pose(carm.cart_pose)
 ```
 
+## 快速开始 — CArmSingleCol（对齐 C++ 单臂接口）
+
+```
+from carm import CArmSingleCol
+
+arm = CArmSingleCol("10.42.0.101")
+arm.connect()
+arm.set_ready()
+
+# 命令类方法返回 int：1 成功，<1 失败
+ret = arm.move_joint([0, 0, 0, 0, 0, 0], is_sync=True)
+if ret == 1:
+    print("运动完成")
+
+# 查询类方法直接返回数据
+print("关节位置:", arm.get_joint_pos())
+print("末端位姿:", arm.get_cart_pose())
+
+arm.disconnect()
+```
+
+## 快速开始 — CArmDualBot（对齐 C++ 双臂接口）
+
+```
+from carm import CArmDualBot
+
+dual = CArmDualBot("10.42.0.101", left_index=0, right_index=1)
+dual.connect()
+dual.set_ready()
+
+# 左臂运动
+dual.move_left_joint([0, 0, 0, 0, 0, 0, 0])
+# 右臂运动
+dual.move_right_joint([0, 0, 0, 0, 0, 0, 0])
+
+# 获取左右臂状态
+print("左臂关节位置:", dual.get_left_joint_pos())
+print("右臂关节位置:", dual.get_right_joint_pos())
+
+dual.disconnect()
+```
+
 # Version update to pypy
 
 ```
@@ -37,7 +87,38 @@ python3 -m twine upload --repository pypi dist/*
 
 # CARM Python SDK
 
-本项目提供与 CARM 机械臂控制器通信的 Python 接口，基于 WebSocket 协议，封装了常用的控制命令和状态查询。支持单臂操作，可与 C++ SDK 功能对齐。
+本项目提供与 CARM 机械臂控制器通信的 Python 接口，基于 WebSocket 协议，封装了常用的控制命令和状态查询。
+
+## 接口层级
+
+| 类名 | 文件 | 对齐 C++ 头文件 | 接口数 | 说明 |
+| --- | --- | --- | --- | --- |
+| `Carm` | `carm_kernel.py` | — | — | 底层 WebSocket 内核，基于属性和简单回调 |
+| `CArmSingleCol` | `carm.py` | `carm_cobot.h` | 93 | 单臂包装类，方法签名与返回值约定与 C++ 完全对齐 |
+| `CArmDualBot` | `carm.py` | `carm_dual.h` | 161 | 双臂包装类，组合两个 `CArmSingleCol`，共享方法同时操作两臂 |
+
+### 返回值约定
+
+* **命令类方法**返回 `int`：`1` 表示成功，`<1` 表示失败（与 C++ 一致）。
+* **查询类方法**返回对应数据类型（`list` / `float` / `dict` / `str` 等）。
+* **输出参数**通过传入可变容器（`list` / `dict`）就地填充，匹配 C++ 引用语义。
+
+### CArmDualBot 命名规则
+
+`CArmDualBot` 的单臂方法采用 `{verb}_{side}_{noun}` 命名，与 C++ 完全一致：
+
+* 查询类：`get_left_joint_pos`、`get_right_cart_pose`、`get_left_gripper_state`
+* 控制类：`move_left_joint`、`track_right_pose`、`set_left_gripper`
+* 回调类：`register_left_joint_cbk`、`release_right_pose_cbk`
+* 底层类：`low_left_pv_command`、`low_right_set_robot_mode`
+* 运动学类：`inverse_kine_left`、`forward_kine_right_array`
+* 示教类：`trajectory_teach_left`、`trajectory_recorder_right`
+
+共享方法（如 `connect`、`set_ready`、`set_speed_level`、`register_error_cbk` 等）同时操作两个臂，全部成功才返回 1。
+
+### 兼容性
+
+`from carm import Carm` 依然可用（兼容旧代码），同时新增 `CArmSingleCol` 和 `CArmDualBot` 导出。
 
 ## 安装
 
@@ -90,6 +171,8 @@ robot.disconnect()
 ```
 
 ## ROS 2 节点与可视化操作界面 (carm_ros2.py)
+
+> `carm_ros2.py` 基于 `Carm` 内核构建。`CArmSingleCol` / `CArmDualBot` 包装类目前不包含 ROS 2 节点封装。
 
 本项目附带了一个基于 `rclpy` 和 `tkinter` 构建的轻量级 ROS 2 节点与操作界面，可以将底层的设备控制封装为标准的 ROS 2 话题进行通讯。
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carm"
-version = "0.1.20260706"
+version = "0.1.20260716"
 authors = [
     {name = "Yujun Huang", email = "huangyujun@cvte.com"},
     {name = "Yong Zhao", email = "zhaoyong11933@cvte.com"}
@@ -31,6 +31,7 @@ packages = ["carm"]
 carm = [
     "__init__.py",
     "carm.py",
+    "carm_kernel.py",
     "carm_ros2.py",
     "carm_scan.py",
 ]
