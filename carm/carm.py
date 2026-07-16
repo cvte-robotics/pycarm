@@ -108,7 +108,7 @@ class Carm:
     @property
     def _arm_state(self):
         """内部方法：安全获取当前手臂的状态字典"""
-        if not self.state or "arm" not in self.state or len(self.state["arm"]) <= self.arm_index:
+        if not self.state or "arm" not in self.state or not isinstance(self.state["arm"], list) or len(self.state["arm"]) <= self.arm_index:
             return {}
         arm_state = self.state["arm"][self.arm_index]
         # 专门处理新兼容旧协议
@@ -165,6 +165,8 @@ class Carm:
     @property
     def on_debug_mode(self):
         """是否在仿真状态"""
+        if not self.state:
+            return False
         return self.state.get("on_debug_mode", False)
 
     @property
@@ -365,104 +367,101 @@ class Carm:
         return eeff.get("eeff_dof", 0)
 
     @property
+    def end_effector_is_connect(self):
+        """末端执行器是否已连接"""
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("is_connect", False)
+
+    # -------------------- deprecated: 旧 gripper/hand 属性 --------------------
+    @property
     def gripper_state(self):
         """夹爪状态（-1 未连接/无夹爪，0 未使能，1 正常）"""
         eeff = self._arm_state.get("eeff", {})
-        if not eeff.get("is_connect", False) or eeff.get("eeff_type") != "gripper":
+        if not eeff.get("is_connect", False) or self.end_effector_type != "gripper":
             return -1
-        return eeff.get("eeff_state", -1)
+        return self.end_effector_state
 
     @property
     def gripper_pos(self):
         """实际夹爪位置（单位：m）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "gripper":
+        if self.end_effector_type != "gripper":
             return 0.0
-        pos = eeff.get("eeff_pos", [])
+        pos = self.end_effector_pos
         return pos[0] if pos else 0.0
 
     @property
     def gripper_tau(self):
         """实际夹爪力矩（单位：N）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "gripper":
+        if self.end_effector_type != "gripper":
             return 0.0
-        tau = eeff.get("eeff_tau", [])
+        tau = self.end_effector_tau
         return tau[0] if tau else 0.0
 
     @property
     def plan_gripper_pos(self):
         """规划夹爪位置（单位：m）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "gripper":
+        if self.end_effector_type != "gripper":
             return 0.0
-        pos = eeff.get("eeff_plan_pos", [])
+        pos = self.plan_end_effector_pos
         return pos[0] if pos else 0.0
 
     @property
     def plan_gripper_tau(self):
         """规划夹爪力矩（单位：N）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "gripper":
+        if self.end_effector_type != "gripper":
             return 0.0
-        tau = eeff.get("eeff_plan_tau", [])
+        tau = self.plan_end_effector_tau
         return tau[0] if tau else 0.0
 
     @property
     def hand_state(self):
         """灵巧手状态（-1 未连接/无灵巧手，0 未使能，1 正常）"""
         eeff = self._arm_state.get("eeff", {})
-        if not eeff.get("is_connect", False) or eeff.get("eeff_type") != "hand":
+        if not eeff.get("is_connect", False) or self.end_effector_type != "hand":
             return -1
-        return eeff.get("eeff_state", -1)
+        return self.end_effector_state
 
     @property
     def hand_pos(self):
         """实际灵巧手位置（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_pos", [])
+        return self.end_effector_pos
 
     @property
     def hand_vel(self):
         """实际灵巧手速度（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_vel", [])
+        return self.end_effector_vel
 
     @property
     def hand_tau(self):
         """实际灵巧手力矩（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_tau", [])
+        return self.end_effector_tau
 
     @property
     def plan_hand_pos(self):
         """规划灵巧手位置（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_plan_pos", [])
+        return self.plan_end_effector_pos
 
     @property
     def plan_hand_vel(self):
         """规划灵巧手速度（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_plan_vel", [])
+        return self.plan_end_effector_vel
 
     @property
     def plan_hand_tau(self):
         """规划灵巧手力矩（列表）"""
-        eeff = self._arm_state.get("eeff", {})
-        if eeff.get("eeff_type") != "hand":
+        if self.end_effector_type != "hand":
             return []
-        return eeff.get("eeff_plan_tau", [])
+        return self.plan_end_effector_tau
 
     # -------------------- 控制命令 --------------------
     def set_ready(self, timeout_ms=3000) -> bool:
@@ -705,9 +704,30 @@ class Carm:
         })
         return res.get("recv") == "Task_Recieve"
 
+    def set_eeff(self, pos, vel, tau) -> bool:
+        """
+        统一末端执行器控制接口，设置末端执行器的位置、速度、力矩。
+        自动推断自由度，pos/vel/tau 维度需一致。
+
+        :param pos: list, 位置值列表（单位：m or rad）
+
+        :param vel: list, 速度值列表（单位：m/s or rad/s）
+
+        :param tau: list, 力矩值列表（单位：N）
+
+        :return: bool, 执行是否成功
+        """
+        dof = max(len(pos) if isinstance(pos, list) else 0,
+                  len(vel) if isinstance(vel, list) else 0,
+                  len(tau) if isinstance(tau, list) else 0)
+        if dof == 0 or len(tau) != dof or len(vel) != dof:
+            print(f"Error: set_eeff dof={dof}, pos/vel/tau 维度不一致")
+            return False
+        return self.set_end_effector(dof, pos, vel, tau)
+
     def set_gripper(self, pos, tau=10) -> bool:
         """设置夹爪位置和力矩（pos单位：m，tau单位：N）"""
-        return self.set_end_effector(1, [pos], [0.0], [tau])
+        return self.set_eeff([pos], [0.0], [tau])
 
     def set_hand(self, pos, tau, vel) -> bool:
         """
@@ -721,13 +741,7 @@ class Carm:
 
         :return: bool, 执行是否成功
         """
-        dof = max(len(pos) if isinstance(pos, list) else 0,
-                  len(tau) if isinstance(tau, list) else 0,
-                  len(vel) if isinstance(vel, list) else 0)
-        if dof == 0 or len(tau)!= dof or len(vel)!= dof:
-            print(f"Error: set_hand dof is zero, invalid input.")
-            return False
-        return self.set_end_effector(dof, pos, vel, tau)
+        return self.set_eeff(pos, vel, tau)
 
     def set_tool_index(self, index) -> bool:
         """
@@ -1011,13 +1025,13 @@ class Carm:
     #         "eeff_tau": gripper
     #     })
 
-    def move_joint(self, pos, tm=-1, is_sync=True, tool=0) -> bool:
+    def move_joint(self, pos, desire_time: float=-1, is_sync=True, tool=0) -> bool:
         """
         关节点的关节空间点到点运动
 
         :param pos: list, 目标关节位置
 
-        :param tm: float, 运动时间（未使用，预留）
+        :param desire_time: float, 期望运动时间（秒），<0 时使用默认速度规划，>=0 时使用 PVT 模式在指定时间内到达
 
         :param is_sync: bool, 是否同步等待
 
@@ -1027,6 +1041,9 @@ class Carm:
             return False
         if not self.__clip_joints(pos):
             return False
+        if desire_time >= 0:
+            return self.move_pvt([list(pos)], gripper_pos=None, stamps=[desire_time],
+                                 is_joint_val=True, is_sync=is_sync)
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -1039,13 +1056,13 @@ class Carm:
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def move_pose(self, pos, tm=-1, is_sync=True, tool=0) -> bool:
+    def move_pose(self, pos, desire_time: float=-1, is_sync=True, tool=0) -> bool:
         """
         笛卡尔点的关节空间点到点运动
 
         :param pos: list, 目标位姿 [x, y, z, qx, qy, qz, qw]
 
-        :param tm: float, 运动时间（未使用，预留）
+        :param desire_time: float, 期望运动时间（秒），<0 时使用默认速度规划，>=0 时使用 PVT 模式在指定时间内到达
 
         :param is_sync: bool, 是否同步等待
 
@@ -1055,6 +1072,9 @@ class Carm:
             return False
         if not self.__check_normalized(pos):
             return False
+        if desire_time >= 0:
+            return self.move_pvt([list(pos)], gripper_pos=None, stamps=[desire_time],
+                                 is_joint_val=False, is_sync=is_sync)
         res = self.request({
             "command": "webRecieveTasks",
             "task_id": "TASK_MOVJ",
@@ -1851,11 +1871,11 @@ class Carm:
 
     # -------------------- 回调处理 --------------------
     def __cbk_status(self, message):
-        if "arm" not in message:
+        if "arm" not in message or not isinstance(message["arm"], list):
             return
 
         self.state = message
-        
+
         # 触发状态更新回调
         if self._arm_state:
             self.call_back.get("updateRobotState", lambda msg: None)(self.state.get("Unix_time_stamp", 0))
@@ -1994,10 +2014,31 @@ class Carm:
     def __clip(self, value, min_val, max_val):
         return max(min_val, min(value, max_val))
 
+    def __ensure_limit(self):
+        """确保关节限位参数已获取，为 None 时自动获取一次"""
+        if self.limit is None and self.is_connected():
+            try:
+                res = self.get_limits()
+                if res:
+                    self.limit = res
+            except Exception as e:
+                print(f"Error: auto-fetch limits failed: {e}")
+
+    def __ensure_eeff_limit(self):
+        """确保末端限位参数已获取，为 None 时自动获取一次"""
+        if self.eeff_limit is None and self.is_connected():
+            try:
+                res = self.get_eeff_config()
+                if res:
+                    self.eeff_limit = res
+            except Exception as e:
+                print(f"Error: auto-fetch eeff_limit failed: {e}")
+
     def __clip_joints(self, joints):
+        self.__ensure_limit()
         if not self.limit:
             return True
-            
+
         lower = self.limit.get('limit_lower', [])
         upper = self.limit.get("limit_upper", [])
         
@@ -2009,6 +2050,7 @@ class Carm:
         return True
 
     def __clip_joints_vel(self, joints_vel):
+        self.__ensure_limit()
         if not self.limit:
             return True
             
@@ -2028,15 +2070,17 @@ class Carm:
                 lst = [float(lst)]
             else:
                 lst = list(lst)
-    
+
             if len(lst) < target_len:
                 lst.extend([default_val] * (target_len - len(lst)))
             elif len(lst) > target_len:
                 del lst[target_len:]
+            return lst
 
+        self.__ensure_eeff_limit()
         if not self.eeff_limit:
             return True
-        
+
         if dof != self.eeff_limit.get("dof", 0):
             return False
 
@@ -2046,9 +2090,9 @@ class Carm:
         tau = self.eeff_limit.get("eeff_tau", [])
 
         # 自动找齐
-        auto_pad(eeff_pos, dof)
-        auto_pad(eeff_tau, dof)
-        auto_pad(eeff_vel, dof)
+        eeff_pos[:] = auto_pad(eeff_pos, dof)
+        eeff_tau[:] = auto_pad(eeff_tau, dof)
+        eeff_vel[:] = auto_pad(eeff_vel, dof)
         # 自动限制
         for i, v in enumerate(eeff_pos):
             eeff_pos[i] = self.__clip(v, lower[i], upper[i])
