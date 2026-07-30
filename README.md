@@ -4,9 +4,9 @@ Python interface for cvte arm.
 
 本包提供三层接口：
 
-* **`Carm`** — 底层 WebSocket 内核（`carm_kernel.py`），基于属性和简单回调的轻量级接口。
-* **`CArmSingleCol`** — 单臂包装类（`carm.py`），方法签名与返回值与 C++ `CArmSingleCol`（`carm_cobot.h`）完全对齐，共 93 个公共接口。
-* **`CArmDualBot`** — 双臂包装类（`carm.py`），组合两个 `CArmSingleCol`，方法签名与 C++ `CArmDualBot`（`carm_dual.h`）完全对齐，共 161 个公共接口。
+- **`Carm`** — 底层 WebSocket 内核（`carm_kernel.py`），基于属性和简单回调的轻量级接口。
+- **`CArmSingleCol`** — 单臂包装类（`carm.py`），方法签名与返回值与 C++ `CArmSingleCol`（`carm_cobot.h`）完全对齐。
+- **`CArmDualBot`** — 双臂包装类（`carm.py`），组合两个 `CArmSingleCol`，方法签名与 C++ `CArmDualBot`（`carm_dual.h`）完全对齐。
 
 # Install
 
@@ -16,29 +16,9 @@ pip install carm
 
 # Usage
 
-## 快速开始 — 底层 Carm 内核
-
-```
-import carm
-
-arm = carm.Carm("ws://localhost:8090")
-
-print("version:",carm.version)
-print("limits:", carm.limit)
-print("state:", carm.state)
-
-carm.track_joint(carm.joint_pos)
-
-carm.move_joint(carm.joint_pos)
-
-carm.track_pose(carm.cart_pose)
-
-carm.move_pose(carm.cart_pose)
-```
-
 ## 快速开始 — CArmSingleCol（对齐 C++ 单臂接口）
 
-```
+```python
 from carm import CArmSingleCol
 
 arm = CArmSingleCol("10.42.0.101")
@@ -59,10 +39,10 @@ arm.disconnect()
 
 ## 快速开始 — CArmDualBot（对齐 C++ 双臂接口）
 
-```
+```python
 from carm import CArmDualBot
 
-dual = CArmDualBot("10.42.0.101", left_index=0, right_index=1)
+dual = CArmDualBot("10.42.0.101")
 dual.connect()
 dual.set_ready()
 
@@ -91,41 +71,41 @@ python3 -m twine upload --repository pypi dist/*
 
 ## 接口层级
 
-| 类名 | 文件 | 对齐 C++ 头文件 | 接口数 | 说明 |
-| --- | --- | --- | --- | --- |
-| `Carm` | `carm_kernel.py` | — | — | 底层 WebSocket 内核，基于属性和简单回调 |
-| `CArmSingleCol` | `carm.py` | `carm_cobot.h` | 93 | 单臂包装类，方法签名与返回值约定与 C++ 完全对齐 |
-| `CArmDualBot` | `carm.py` | `carm_dual.h` | 161 | 双臂包装类，组合两个 `CArmSingleCol`，共享方法同时操作两臂 |
+| 类名              | 文件               | 对齐 C++ 头文件  | 说明                                                         |
+| ----------------- | ------------------ | ---------------- | ------------------------------------------------------------ |
+| `Carm`          | `carm_kernel.py` | —               | 底层 WebSocket 内核，供上层接口调用                          |
+| `CArmSingleCol` | `carm.py`        | `carm_cobot.h` | 单臂包装类，方法签名与返回值约定与 C++ 完全对齐              |
+| `CArmDualBot`   | `carm.py`        | `carm_dual.h`  | 双臂包装类，组合两个 `CArmSingleCol`，共享方法同时操作两臂 |
 
 ### 返回值约定
 
-* **命令类方法**返回 `int`：`1` 表示成功，`<1` 表示失败（与 C++ 一致）。
-* **查询类方法**返回对应数据类型（`list` / `float` / `dict` / `str` 等）。
-* **输出参数**通过传入可变容器（`list` / `dict`）就地填充，匹配 C++ 引用语义。
+- **命令类方法**返回 `int`：`1` 表示成功，`<1` 表示失败（与 C++ 一致）。
+- **查询类方法**返回对应数据类型（`list` / `float` / `dict` / `str` 等）。
+- **输出参数**通过传入可变容器（`list` / `dict`）就地填充，匹配 C++ 引用语义。
 
 ### CArmDualBot 命名规则
 
 `CArmDualBot` 的单臂方法采用 `{verb}_{side}_{noun}` 命名，与 C++ 完全一致：
 
-* 查询类：`get_left_joint_pos`、`get_right_cart_pose`、`get_left_gripper_state`
-* 控制类：`move_left_joint`、`track_right_pose`、`set_left_gripper`
-* 回调类：`register_left_joint_cbk`、`release_right_pose_cbk`
-* 底层类：`low_left_pv_command`、`low_right_set_robot_mode`
-* 运动学类：`inverse_kine_left`、`forward_kine_right_array`
-* 示教类：`trajectory_teach_left`、`trajectory_recorder_right`
+- 查询类：`get_left_joint_pos`、`get_right_cart_pose`、`get_left_gripper_state`
+- 控制类：`move_left_joint`、`track_right_pose`、`set_left_gripper`
+- 回调类：`register_left_joint_cbk`、`release_right_pose_cbk`
+- 底层类：`low_left_pv_command`、`low_right_set_robot_mode`
+- 运动学类：`inverse_kine_left`、`forward_kine_right_array`
+- 示教类：`trajectory_teach_left`、`trajectory_recorder_right`
 
 共享方法（如 `connect`、`set_ready`、`set_speed_level`、`register_error_cbk` 等）同时操作两个臂，全部成功才返回 1。
 
 ### 兼容性
 
-`from carm import Carm` 依然可用（兼容旧代码），同时新增 `CArmSingleCol` 和 `CArmDualBot` 导出。
+`from carm import Carm` 依然可用（兼容旧代码，不推荐），同时新增 `CArmSingleCol` 和 `CArmDualBot` 导出。
 
 ## 安装
 
 ### 依赖
 
-* Python 3.6+
-* websocket-client
+- Python 3.6+
+- websocket-client
 
 ### 安装方式
 
@@ -143,91 +123,25 @@ pip install carm
 pip install websocket-client
 ```
 
-## 快速开始
-
-**python**
-
-```
-from carm import Carm
-
-# 连接到机械臂（默认 IP: 10.42.0.101:8090）
-robot = Carm("10.42.0.101")
-
-# 等待连接成功，检查状态
-if robot.is_connected():
-    print("Connected!")
-
-# 将机械臂设置为就绪状态（清除错误、上使能、位置模式）
-robot.set_ready()
-
-# 获取当前关节位置
-print("Joint positions:", robot.joint_pos)
-
-# 移动到目标关节位置（阻塞等待完成）
-robot.move_joint([0.1, -0.2, 0.3, 0.0, 0.0, 0.0], is_sync=True)
-
-# 关闭连接
-robot.disconnect()
-```
-
-## ROS 2 节点与可视化操作界面 (carm_ros2.py)
-
-> `carm_ros2.py` 基于 `Carm` 内核构建。`CArmSingleCol` / `CArmDualBot` 包装类目前不包含 ROS 2 节点封装。
-
-本项目附带了一个基于 `rclpy` 和 `tkinter` 构建的轻量级 ROS 2 节点与操作界面，可以将底层的设备控制封装为标准的 ROS 2 话题进行通讯。
-
-### 功能特性
-
-1. **可视化设备连接管理**：在界面直接填写目标 IP 地址和 `Arm Index` 即可进行连接与断开，且自带实时的连通状态指示灯（绿/灰）。
-2. **ROS 2 话题热更新**：允许用户在界面配置区域为每一项发布与订阅重新命名，一键“重启并更新话题”即刻生效，无需重启代码。
-
-### 运行方式
-
-由于包含 ROS 2 内容，请确保终端已初始化 ROS 2 环境（如 `source /opt/ros/<your_ros>/setup.bash`），可以直接在终端执行以下快捷指令唤起界面：
-
-**bash**
-
-```bash
-carm_ros2
-```
-
-### 默认话题清单
-
-该界面默认会自动暴露以下话题接入您的 ROS 2 系统，您能在界面中自由修改：
-
-- **发布话题 (Publishers):**
-
-  - `real_joint_state` [sensor_msgs/JointState]: 发布实时关节和夹爪状态 (位置、速度、力矩)
-  - `flange_cart_state` [geometry_msgs/PoseStamped]: 发布机械臂法兰笛卡尔位姿
-  - `arm_state` [std_msgs/Int16MultiArray]: 机械臂综合状态集合（连接状态、伺服状态、被动/主动模式等）
-  - `task_completion` [std_msgs/String]: 任务完成提示
-  - `carm_error` [std_msgs/String]: 运行报错提示
-- **订阅话题 (Subscribers):**
-
-  - **基础指令**: `connect` [String], `ready` [Bool], `emergency_stop` [Bool]
-  - **配置指令**: `set_speed_level` [Int16MultiArray], `set_servo_enable` [Bool], `set_collision_config` [Int16MultiArray], `set_control_mode` [Int8]
-  - **关节空间运动**: `move_joint`, `move_line_joint`, `move_tracking_joint`, `set_gripper` [以上均为 sensor_msgs/JointState]
-  - **笛卡尔空间运动**: `move_pose`, `move_line_pose`, `move_tracking_pose` [以上均为 geometry_msgs/Pose]
-
 ## API 参考
 
 ### 连接管理
 
 #### `__init__(addr="10.42.0.101", arm_index=0)`
 
-* 描述：初始化实例，自动连接指定 IP 的控制器。
-* 参数：
-  * `addr` (str): 控制器 IP 地址。
-  * `arm_index` (int): 机械臂索引（0 表示第一个臂）。
+- 描述：初始化实例，自动连接指定 IP 的控制器。
+- 参数：
+  - `addr` (str): 控制器 IP 地址。
+  - `arm_index` (int): 机械臂索引（0 表示第一个臂）。
 
 #### `connect(addr=None, port=None, timeout=1)`
 
-* 描述：连接到控制器。
-* 参数：
-  * `addr` (str, optional): 新 IP 地址。
-  * `port` (int, optional): 新端口。
-  * `timeout` (float): 超时秒数。
-* 返回：`bool` 是否连接成功。
+- 描述：连接到控制器。
+- 参数：
+  - `addr` (str, optional): 新 IP 地址。
+  - `port` (int, optional): 新端口。
+  - `timeout` (float): 超时秒数。
+- 返回：`bool` 是否连接成功。
 
 **python**
 
@@ -237,12 +151,12 @@ robot.connect(addr="192.168.1.100", timeout=2)
 
 #### `disconnect()`
 
-* 描述：断开连接。
+- 描述：断开连接。
 
 #### `is_connected()`
 
-* 描述：返回当前连接状态。
-* 返回：`bool`
+- 描述：返回当前连接状态。
+- 返回：`bool`
 
 **python**
 
@@ -257,23 +171,23 @@ if robot.is_connected():
 
 #### `get_limits()`
 
-* 描述：获取关节限位、最大速度、加速度等参数。
-* 返回：字典，包含以下配置字段（可能依控制器的不同部分存在）：
-  * `limit_lower` (list): 关节下限位 (rad)
-  * `limit_upper` (list): 关节上限位 (rad)
-  * `limit_vel` (list): 关节最大速度 (rad/s)
-  * `limit_acc` (list): 关节最大加速度 (rad/s^2)
-  * `limit_jerk` (list): 关节最大加加速度 (rad/s^3)
+- 描述：获取关节限位、最大速度、加速度等参数。
+- 返回：字典，包含以下配置字段（可能依控制器的不同部分存在）：
+  - `limit_lower` (list): 关节下限位 (rad)
+  - `limit_upper` (list): 关节上限位 (rad)
+  - `limit_vel` (list): 关节最大速度 (rad/s)
+  - `limit_acc` (list): 关节最大加速度 (rad/s^2)
+  - `limit_jerk` (list): 关节最大加加速度 (rad/s^3)
 
 #### `get_eeff_config()`
 
-* 描述：获取末端执行器配置。
-* 返回：包含完整末端配置特性的字典，使用时请通过以下键名解析：
-  * `eeff_dof` (int): 末端执行器自由度数量
-  * `eeff_lower` (list): 末端下限位
-  * `eeff_upper` (list): 末端上限位
-  * `eeff_vel` (list): 末端最大速度
-  * `eeff_tau` (list): 末端最大力矩
+- 描述：获取末端执行器配置。
+- 返回：包含完整末端配置特性的字典，使用时请通过以下键名解析：
+  - `eeff_dof` (int): 末端执行器自由度数量
+  - `eeff_lower` (list): 末端下限位
+  - `eeff_upper` (list): 末端上限位
+  - `eeff_vel` (list): 末端最大速度
+  - `eeff_tau` (list): 末端最大力矩
 
 ---
 
@@ -283,17 +197,17 @@ if robot.is_connected():
 
 #### 机械臂基础状态
 
-* `arm_name`: 机械臂名称（字符串）
-* `arm_dof`: 机械臂自由度（整数）
-* `servo_status`: 伺服状态（1: 使能，0: 失能）
-* `controller_state`: 控制器运行状态（-1-error, 0-standby, 1-running, 2-dragging）
-* `fsm_mode`: 控制器模式（如 ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION）
-* `speed_percentage`: 获取当前设定运行速度标幺值
-* `on_debug_mode`: 是否在仿真状态（布尔值）
+- `arm_name`: 机械臂名称（字符串）
+- `arm_dof`: 机械臂自由度（整数）
+- `servo_status`: 伺服状态（1: 使能，0: 失能）
+- `controller_state`: 控制器运行状态（-1-error, 0-standby, 1-running, 2-dragging）
+- `fsm_mode`: 控制器模式（如 ERROR = -1, IDLE, POSITION, MIT, CURRENT, PF, TELEOPERATION）
+- `speed_percentage`: 获取当前设定运行速度标幺值
+- `on_debug_mode`: 是否在仿真状态（布尔值）
 
 #### `version`
 
-* 返回：控制器软件版本（字符串）。
+- 返回：控制器软件版本（字符串）。
 
 **python**
 
@@ -303,7 +217,7 @@ print("Version:", robot.version)
 
 #### `joint_pos` / `joint_vel` / `joint_tau`
 
-* 返回：实际关节位置（弧度）、速度、力矩（列表，长度 = 自由度）。
+- 返回：实际关节位置（弧度）、速度、力矩（列表，长度 = 自由度）。
 
 **python**
 
@@ -313,34 +227,34 @@ print("Joint positions:", robot.joint_pos)
 
 #### `plan_joint_pos` / `plan_joint_vel` / `plan_joint_tau`
 
-* 返回：规划关节位置、速度、力矩。
+- 返回：规划关节位置、速度、力矩。
 
 #### `cart_pose`
 
-* 返回：实际法兰位姿，格式 `[x, y, z, qw, qx, qy, qz]`。
+- 返回：实际法兰位姿，格式 `[x, y, z, qw, qx, qy, qz]`。
 
 #### `plan_cart_pose`
 
-* 返回：规划法兰位姿。
+- 返回：规划法兰位姿。
 
 #### `joint_external_tau` / `cart_external_force`
 
-* 返回：关节外力矩、笛卡尔外力（6 维）。
+- 返回：关节外力矩、笛卡尔外力（6 维）。
 
 #### 末端执行器属性
 
-* `end_effector_state`: 状态（-1 未连接/无，0 未使能，1 正常）
-* `end_effector_type`: 末端执行器类型
-* `end_effector_name`: 末端执行器名称
-* `end_effector_dof`: 末端执行器自由度
-* `end_effector_pos` / `vel` / `tau`: 实际位置/速度/力矩（列表）
-* `plan_end_effector_pos` / `vel` / `tau`: 规划值
-* `gripper_state`: 夹爪状态（简化，-1/0/1）
-* `gripper_pos` / `tau`: 夹爪位置和力矩（单值）
-* `plan_gripper_pos` / `tau`: 规划夹爪值
-* `hand_state`: 灵巧手状态
-* `hand_pos` / `vel` / `tau`: 灵巧手实际位置/速度/力矩（列表）
-* `plan_hand_pos` / `vel` / `tau`: 规划灵巧手值
+- `end_effector_state`: 状态（-1 未连接/无，0 未使能，1 正常）
+- `end_effector_type`: 末端执行器类型
+- `end_effector_name`: 末端执行器名称
+- `end_effector_dof`: 末端执行器自由度
+- `end_effector_pos` / `vel` / `tau`: 实际位置/速度/力矩（列表）
+- `plan_end_effector_pos` / `vel` / `tau`: 规划值
+- `gripper_state`: 夹爪状态（简化，-1/0/1）
+- `gripper_pos` / `tau`: 夹爪位置和力矩（单值）
+- `plan_gripper_pos` / `tau`: 规划夹爪值
+- `hand_state`: 灵巧手状态
+- `hand_pos` / `vel` / `tau`: 灵巧手实际位置/速度/力矩（列表）
+- `plan_hand_pos` / `vel` / `tau`: 规划灵巧手值
 
 **python**
 
@@ -350,7 +264,7 @@ print("Gripper position:", robot.gripper_pos)
 
 #### `tool_index`
 
-* 返回：当前工具号。
+- 返回：当前工具号。
 
 **python**
 
@@ -366,10 +280,10 @@ print("Current tool:", robot.tool_index)
 
 #### `set_ready(timeout_ms=3000)`
 
-* 描述：将机械臂置为就绪状态（清除错误、伺服上使能、切换到位置模式）。
-* 参数：
-  * `timeout_ms` (int): 超时毫秒。
-* 返回：`bool` 是否成功。
+- 描述：将机械臂置为就绪状态（清除错误、伺服上使能、切换到位置模式）。
+- 参数：
+  - `timeout_ms` (int): 超时毫秒。
+- 返回：`bool` 是否成功。
 
 **python**
 
@@ -380,15 +294,15 @@ if robot.set_ready():
 
 #### `set_servo_enable(enable=True)`
 
-* 描述：设置伺服使能。
-* 参数：
-  * `enable` (bool): True 上使能，False 下使能。
+- 描述：设置伺服使能。
+- 参数：
+  - `enable` (bool): True 上使能，False 下使能。
 
 #### `set_control_mode(mode=1)`
 
-* 描述：设置控制模式。
-* 参数：
-  * `mode` (int): 0-IDLE, 1-点位, 2-MIT, 3-拖动, 4-力位混合。
+- 描述：设置控制模式。
+- 参数：
+  - `mode` (int): 0-IDLE, 1-点位, 2-MIT, 3-拖动, 4-力位混合。
 
 **python**
 
@@ -398,12 +312,12 @@ robot.set_control_mode(3)  # 进入拖动模式
 
 #### `set_passthrough_data(mode, can_id, data)`
 
-* 描述：设置透传数据。
-* 参数：
-  * `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
-  * `can_id` (int): CAN ID。
-  * `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
-* 返回：当模式为 1 或 2 且执行成功时，返回 `(True, can_id, bytes_data)` 三元组；其它情况返回 `(False, None, None)`。
+- 描述：设置透传数据。
+- 参数：
+  - `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
+  - `can_id` (int): CAN ID。
+  - `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
+- 返回：当模式为 1 或 2 且执行成功时，返回 `(True, can_id, bytes_data)` 三元组；其它情况返回 `(False, None, None)`。
 
 **python**
 
@@ -415,13 +329,13 @@ print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
 
 #### `set_end_effector(dof, pos, vel, tau)`
 
-* 描述：设置末端执行器（夹爪/灵巧手）的目标位置、速度、力矩。
-* 参数：
-  * `dof` (int): 自由度。
-  * `pos` (float/list): 位置值或列表。
-  * `vel` (float/list): 速度值或列表。
-  * `tau` (float/list): 力矩值或列表。
-* 说明：输入自动对齐到指定自由度，不足补零，超出截断。
+- 描述：设置末端执行器（夹爪/灵巧手）的目标位置、速度、力矩。
+- 参数：
+  - `dof` (int): 自由度。
+  - `pos` (float/list): 位置值或列表。
+  - `vel` (float/list): 速度值或列表。
+  - `tau` (float/list): 力矩值或列表。
+- 说明：输入自动对齐到指定自由度，不足补零，超出截断。
 
 **python**
 
@@ -432,10 +346,10 @@ robot.set_end_effector(1, pos=0.02, vel=0.0, tau=5.0)
 
 #### `set_gripper(pos, tau=10)`
 
-* 描述：简化的夹爪控制（单自由度）。
-* 参数：
-  * `pos` (float): 夹爪间隔（米），范围 0~0.08。
-  * `tau` (float): 夹持力矩（N·m），范围 0~100。
+- 描述：简化的夹爪控制（单自由度）。
+- 参数：
+  - `pos` (float): 夹爪间隔（米），范围 0~0.08。
+  - `tau` (float): 夹持力矩（N·m），范围 0~100。
 
 **python**
 
@@ -445,12 +359,12 @@ robot.set_gripper(0.03, tau=8)
 
 #### `set_hand(pos, tau, vel)`
 
-* 描述：设置灵巧手位置、力矩和速度。
-* 参数：
-  * `pos` (float/list): 灵巧手位置或列表。
-  * `tau` (float/list): 灵巧手力矩或列表。
-  * `vel` (float/list): 灵巧手速度或列表。
-* 说明：输入自动对齐到指定自由度，不足补零，超出截断。
+- 描述：设置灵巧手位置、力矩和速度。
+- 参数：
+  - `pos` (float/list): 灵巧手位置或列表。
+  - `tau` (float/list): 灵巧手力矩或列表。
+  - `vel` (float/list): 灵巧手速度或列表。
+- 说明：输入自动对齐到指定自由度，不足补零，超出截断。
 
 **python**
 
@@ -461,9 +375,9 @@ robot.set_hand([0.1, 0.2, 0.3], tau=[5.0, 5.0, 5.0], vel=[0.1, 0.1, 0.1])
 
 #### `set_tool_index(index)`
 
-* 描述：切换当前工具号。
-* 参数：
-  * `index` (int): 工具索引。
+- 描述：切换当前工具号。
+- 参数：
+  - `index` (int): 工具索引。
 
 **python**
 
@@ -473,17 +387,17 @@ robot.set_tool_index(1)
 
 #### `get_tool_coordinate(tool)`
 
-* 描述：获取指定工具坐标系（工具末端相对法兰的位姿）。
-* 参数：
-  * `tool` (int): 工具号。
-* 返回：工具的笛卡尔坐标 `[x, y, z, qx, qy, qz, qw]` 列表，失败或异常返回空列表 `[]`。
+- 描述：获取指定工具坐标系（工具末端相对法兰的位姿）。
+- 参数：
+  - `tool` (int): 工具号。
+- 返回：工具的笛卡尔坐标 `[x, y, z, qx, qy, qz, qw]` 列表，失败或异常返回空列表 `[]`。
 
-#### `set_collision_config(flag=True, level=10)`
+#### `set_collision_config(flag=True, level=0)`
 
-* 描述：配置碰撞检测。
-* 参数：
-  * `flag` (bool): 是否开启。
-  * `level` (int): 灵敏度等级 0~2（0 最灵敏）。
+- 描述：配置碰撞检测。
+- 参数：
+  - `flag` (bool): 是否开启。
+  - `level` (int): 灵敏度等级 0~2（0 最灵敏）。
 
 **python**
 
@@ -493,9 +407,9 @@ robot.set_collision_config(True, level=1)
 
 #### `stop(type=0)`
 
-* 描述：通用停止。
-* 参数：
-  * `type` (int): 0-暂停, 1-停止, 2-禁用, 3-紧急停止。
+- 描述：通用停止。
+- 参数：
+  - `type` (int): 0-暂停, 1-停止, 2-禁用, 3-紧急停止。
 
 **python**
 
@@ -505,24 +419,24 @@ robot.stop(1)  # 停止
 
 #### `stop_task(at_once=False)`
 
-* 描述：停止当前任务。
-* 参数：
-  * `at_once` (bool): 是否立即停止（否则完成当前段后停止）。
+- 描述：停止当前任务。
+- 参数：
+  - `at_once` (bool): 是否立即停止（否则完成当前段后停止）。
 
 #### `recover()`
 
-* 描述：退出暂停/急停状态。
+- 描述：退出暂停/急停状态。
 
 #### `clean_carm_error()`
 
-* 描述：清除控制器错误。
+- 描述：清除控制器错误。
 
 #### `set_speed_level(level=5.0, response_level=20)`
 
-* 描述：设置速度等级。
-* 参数：
-  * `level` (float): 0~10，对应 0%~100%。
-  * `response_level` (int): 过渡周期数（1~10000）。
+- 描述：设置速度等级。
+- 参数：
+  - `level` (float): 0~10，对应 0%~100%。
+  - `response_level` (int): 过渡周期数（1~10000）。
 
 **python**
 
@@ -536,10 +450,10 @@ robot.set_speed_level(3.0, response_level=10)
 
 #### `track_joint(pos, end_effector=None)`
 
-* 描述：关节空间轨迹跟踪（周期性发送目标关节位置）。
-* 参数：
-  * `pos` (list): 目标关节位置。
-  * `end_effector` (float, optional): 夹爪目标位置（0~0.08）。
+- 描述：关节空间轨迹跟踪（周期性发送目标关节位置）。
+- 参数：
+  - `pos` (list): 目标关节位置。
+  - `end_effector` (float, optional): 夹爪目标位置（0~0.08）。
 
 **python**
 
@@ -549,7 +463,7 @@ robot.track_joint([0.1, -0.2, 0.3, 0, 0, 0], end_effector=0.02)
 
 #### `track_pose(pos, end_effector=None)`
 
-* 描述：笛卡尔空间轨迹跟踪（周期性发送目标位姿）。
+- 描述：笛卡尔空间轨迹跟踪（周期性发送目标位姿）。
 
 **python**
 
@@ -558,14 +472,14 @@ target_pose = [0.5, 0.0, 0.3, 0.707, 0.0, 0.707, 0.0]
 robot.track_pose(target_pose, end_effector=0.02)
 ```
 
-#### `move_joint(pos, tm=-1, is_sync=True, tool=0)`
+#### `move_joint(pos, desire_time=-1, is_sync=True, tool=0)`
 
-* 描述：关节空间点到点运动（TASK_MOVJ）。
-* 参数：
-  * `pos` (list): 目标关节位置。
-  * `tm` (float): 期望运动时间（-1 表示自动）。
-  * is_sync (bool): 是否阻塞等待完成。
-  * `tool` (int): 工具号。
+- 描述：关节空间点到点运动（TASK_MOVJ）。
+- 参数：
+  - `pos` (list): 目标关节位置。
+  - `desire_time` (float): 期望运动时间（-1 表示自动）。
+  - `is_sync` (bool): 是否阻塞等待完成。
+  - `tool` (int): 工具号。
 
 **python**
 
@@ -573,13 +487,13 @@ robot.track_pose(target_pose, end_effector=0.02)
 res = robot.move_joint([0.2, -0.3, 0.4, 0, 0, 0], is_sync=True)
 ```
 
-#### `move_pose(pos, tm=-1, is_sync=True, tool=0)`
+#### `move_pose(pos, desire_time=-1, is_sync=True, tool=0)`
 
-* 描述：笛卡尔空间点到点运动。
+- 描述：笛卡尔空间点到点运动。
 
 #### `move_line_pose(pos, is_sync=True, tool=0)`
 
-* 描述：笛卡尔直线运动（TASK_MOVL）。
+- 描述：笛卡尔直线运动（TASK_MOVL）。
 
 **python**
 
@@ -589,16 +503,16 @@ robot.move_line_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], is_sync=True)
 
 #### `move_line_joint(pos, is_sync=True, tool=0)`
 
-* 描述：关节空间直线运动。
+- 描述：关节空间直线运动。
 
 #### `move_flow_pose(target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0)`
 
-* 描述：笛卡尔雅可比迭代运动（TASK_FLOW）。
-* 参数：
-  * `target_pos` (list): 目标位姿。
-  * `line_theta_weight` (float): 位置/姿态权重（0~1）。
-  * `accuracy` (float): 收敛精度。
-  * `move_line` (bool): 是否直线运动。
+- 描述：笛卡尔雅可比迭代运动（TASK_FLOW）。
+- 参数：
+  - `target_pos` (list): 目标位姿。
+  - `line_theta_weight` (float): 位置/姿态权重（0~1）。
+  - `accuracy` (float): 收敛精度。
+  - `move_line` (bool): 是否直线运动。
 
 **python**
 
@@ -608,13 +522,13 @@ robot.move_flow_pose([0.6, 0.1, 0.3, 0.707, 0, 0.707, 0], accuracy=0.001)
 
 #### `move_toppra(targets, speed=100, tool=0, is_joint_val=True, is_sync=True)`
 
-* 描述：基于 TOPPRA 的多点轨迹运动。
-* 参数：
-  * `targets` (list): 目标轨迹点列表（也可传入单个目标点），可以为关节位置序列或笛卡尔位姿序列。
-  * `speed` (float): 速度百分比。
-  * `tool` (int): 工具号。
-  * `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
-  * `is_sync` (bool): 是否阻塞等待完成。
+- 描述：基于 TOPPRA 的多点轨迹运动。
+- 参数：
+  - `targets` (list): 目标轨迹点列表（也可传入单个目标点），可以为关节位置序列或笛卡尔位姿序列。
+  - `speed` (float): 速度百分比。
+  - `tool` (int): 工具号。
+  - `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
+  - `is_sync` (bool): 是否阻塞等待完成。
 
 **python**
 
@@ -624,31 +538,31 @@ robot.move_toppra([[0.1, -0.2, 0.3, 0, 0, 0], [0.2, -0.3, 0.4, 0, 0, 0]], is_joi
 
 #### `move_joint_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* 描述：关节轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
-* 参数：
-  * `target_traj` (list): 目标关节位置轨迹列表。
-  * `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效），与路点一一对应。
-  * `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
-  * `is_sync` (bool): 是否阻塞等待完成。
+- 描述：关节轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
+- 参数：
+  - `target_traj` (list): 目标关节位置轨迹列表。
+  - `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效），与路点一一对应。
+  - `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
+  - `is_sync` (bool): 是否阻塞等待完成。
 
 #### `move_pose_traj(target_traj, gripper_pos=None, stamps=None, is_sync=True)`
 
-* 描述：位姿轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
-* 参数：
-  * `target_traj` (list): 目标笛卡尔位姿轨迹列表。
-  * `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效）。
-  * `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
-  * `is_sync` (bool): 是否阻塞等待完成。
+- 描述：位姿轨迹连续运动。`stamps` 为空时使用 TOPPRA 路径规划，有值时使用 PVT 模式。
+- 参数：
+  - `target_traj` (list): 目标笛卡尔位姿轨迹列表。
+  - `gripper_pos` (list, optional): 夹爪位置列表（仅 PVT 模式生效）。
+  - `stamps` (list, optional): 时间戳列表（秒），None 或空时使用 TOPPRA，有值时使用 PVT。
+  - `is_sync` (bool): 是否阻塞等待完成。
 
 #### `move_pvt(target_pos, gripper_pos=None, stamps=None, is_joint_val=True, is_sync=True)`
 
-* 描述：PVT（位置-速度-时间）模式运动，无需加入起始点，直接给目标点。
-* 参数：
-  * `target_pos` (list): 规划路点列表，每个路点为关节角或位姿。
-  * `gripper_pos` (list, optional): 夹爪位置列表，与路点一一对应，None 或空为不运动夹爪。
-  * `stamps` (list): 时间戳列表（秒），与路点一一对应，必须递增且大于0。
-  * `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
-  * `is_sync` (bool): 是否同步等待任务完成。
+- 描述：PVT（位置-速度-时间）模式运动，无需加入起始点，直接给目标点。
+- 参数：
+  - `target_pos` (list): 规划路点列表，每个路点为关节角或位姿。
+  - `gripper_pos` (list, optional): 夹爪位置列表，与路点一一对应，None 或空为不运动夹爪。
+  - `stamps` (list): 时间戳列表（秒），与路点一一对应，必须递增且大于0。
+  - `is_joint_val` (bool): True 表示关节空间目标，False 表示笛卡尔空间目标。
+  - `is_sync` (bool): 是否同步等待任务完成。
 
 **python**
 
@@ -664,10 +578,10 @@ robot.move_pvt(waypoints, stamps=stamps, is_joint_val=True)
 
 #### `trajectory_teach(off_on, name="")`
 
-* 描述：开始/停止示教录制。
-* 参数：
-  * `off_on` (bool): True 开始，False 停止。
-  * `name` (str): 轨迹名称。
+- 描述：开始/停止示教录制。
+- 参数：
+  - `off_on` (bool): True 开始，False 停止。
+  - `name` (str): 轨迹名称。
 
 **python**
 
@@ -679,7 +593,7 @@ robot.trajectory_teach(False, "my_traj_001")
 
 #### `trajectory_recorder(name, is_sync=True)`
 
-* 描述：复现指定名称的轨迹。
+- 描述：复现指定名称的轨迹。
 
 **python**
 
@@ -689,8 +603,8 @@ robot.trajectory_recorder("my_traj_001", is_sync=True)
 
 #### `check_teach()`
 
-* 描述：获取已录制的轨迹列表。
-* 返回：列表。
+- 描述：获取已录制的轨迹列表。
+- 返回：列表。
 
 **python**
 
@@ -705,12 +619,12 @@ print("Recorded trajectories:", traj_list)
 
 #### `inverse_kine(cart_pose, ref_joints, tool=0)`
 
-* 描述：逆运动学求解。
-* 参数：
-  * `cart_pose` (list 或 list of lists): 目标位姿（单个或多个）。
-  * `ref_joints` (list 或 list of lists): 参考关节角。
-  * `tool` (int): 工具号。
-* 返回：成功时返回解析过的关节角结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
+- 描述：逆运动学求解。
+- 参数：
+  - `cart_pose` (list 或 list of lists): 目标位姿（单个或多个）。
+  - `ref_joints` (list 或 list of lists): 参考关节角。
+  - `tool` (int): 工具号。
+- 返回：成功时返回解析过的关节角结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
 
 **python**
 
@@ -721,11 +635,11 @@ print("Inverse joints:", joints)
 
 #### `forward_kine(joint_pos, tool=0)`
 
-* 描述：正运动学求解。
-* 参数：
-  * `joint_pos` (list 或 list of lists): 关节角。
-  * `tool` (int): 工具号。
-* 返回：成功时返回解析过的位姿结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
+- 描述：正运动学求解。
+- 参数：
+  - `joint_pos` (list 或 list of lists): 关节角。
+  - `tool` (int): 工具号。
+- 返回：成功时返回解析过的位姿结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
 
 **python**
 
@@ -740,17 +654,17 @@ print("Cartesian pose:", pose)
 
 #### `ping(date=None)`
 
-* 描述：发送 ping 请求，用于测试通讯延时及带宽。
-* 参数：
-  * `date` (str, optional): 携带的数据载荷。
-* 返回：`dict`，包含 `Unix_resp`（接收时间戳）和 `data`（载荷）。
+- 描述：发送 ping 请求，用于测试通讯延时及带宽。
+- 参数：
+  - `date` (str, optional): 携带的数据载荷。
+- 返回：`dict`，包含 `Unix_resp`（接收时间戳）和 `data`（载荷）。
 
 #### `set_debug(flag=False)`
 
-* 描述：设置控制器进入 debug 仿真模式，该模式下不连接机械臂。
-* 参数：
-  * `flag` (bool): True 开启仿真模式，False 关闭。
-* 返回：`bool` 执行是否成功。
+- 描述：设置控制器进入 debug 仿真模式，该模式下不连接机械臂。
+- 参数：
+  - `flag` (bool): True 开启仿真模式，False 关闭。
+- 返回：`bool` 执行是否成功。
 
 ---
 
@@ -760,10 +674,10 @@ print("Cartesian pose:", pose)
 
 #### `set_low_mode(flag=True)`
 
-* 描述：设置底层透传模式。
-* 参数：
-  * `flag` (bool): True 开启，False 关闭。
-* 返回：`bool`
+- 描述：设置底层透传模式。
+- 参数：
+  - `flag` (bool): True 开启，False 关闭。
+- 返回：`bool`
 
 #### 底层控制指令
 
@@ -771,82 +685,82 @@ print("Cartesian pose:", pose)
 
 ##### `low_pv_command(pos, vel)`
 
-* 描述：发送底层位置速度(PV)控制指令。
-* 参数：`pos` (list) 目标关节位置 (rad)，`vel` (list) 目标关节速度 (rad/s)。
+- 描述：发送底层位置速度(PV)控制指令。
+- 参数：`pos` (list) 目标关节位置 (rad)，`vel` (list) 目标关节速度 (rad/s)。
 
 ##### `low_mit_command(pos, vel, tau, kp, kd)`
 
-* 描述：发送底层 MIT 综合控制指令。
-* 参数：`pos`/`vel`/`tau`/`kp`/`kd` 均为 list，分别对应关节位置、速度、前馈力矩、刚度、阻尼。
+- 描述：发送底层 MIT 综合控制指令。
+- 参数：`pos`/`vel`/`tau`/`kp`/`kd` 均为 list，分别对应关节位置、速度、前馈力矩、刚度、阻尼。
 
 ##### `low_pf_command(pos, vel, tau)`
 
-* 描述：发送底层位置力矩(PF)混合控制指令。
+- 描述：发送底层位置力矩(PF)混合控制指令。
 
 ##### `low_current_command(tau)`
 
-* 描述：发送底层力矩(Current)指令。
-* 参数：`tau` (list) 目标关节力矩 (N·m)。
+- 描述：发送底层力矩(Current)指令。
+- 参数：`tau` (list) 目标关节力矩 (N·m)。
 
 ##### `low_refresh()`
 
-* 描述：主动刷新并获取底层硬件数据（无需下发控制指令）。
+- 描述：主动刷新并获取底层硬件数据（无需下发控制指令）。
 
 ##### `low_set_end_effector_ctr(pos, vel, tau)`
 
-* 描述：底层末端执行器控制指令。
+- 描述：底层末端执行器控制指令。
 
 #### 底层配置指令
 
 ##### `low_set_robot_mode(mode)`
 
-* 描述：设置机器人底层运行模式。
+- 描述：设置机器人底层运行模式。
 
 ##### `low_set_end_effector_mode(mode)`
 
-* 描述：设置末端执行器底层运行模式。
+- 描述：设置末端执行器底层运行模式。
 
 ##### `low_set_servo_enable(status)`
 
-* 描述：控制底层伺服上/下使能。
-* 参数：`status` (bool) True 上使能，False 下使能。
+- 描述：控制底层伺服上/下使能。
+- 参数：`status` (bool) True 上使能，False 下使能。
 
 ##### `low_reset(cnt=5)`
 
-* 描述：进行底层错误复位操作。
-* 参数：`cnt` (int) 尝试复位的最大次数。
+- 描述：进行底层错误复位操作。
+- 参数：`cnt` (int) 尝试复位的最大次数。
 
 #### 底层状态查询
 
 ##### `low_get_servo_status()`
 
-* 描述：主动获取底层伺服级状态。
-* 返回：`dict`，包含 `mitKp`/`mitKd`/`pvVel`/`pfVel`/`isServoEnable`/`fsmMode`/`isConnected`/`mosTemperature`/`motorTemperature`/`motorVBus`/`motorErrorCode`/`motorErrorMsg` 等字段。
+- 描述：主动获取底层伺服级状态。
+- 返回：`dict`，包含 `mitKp`/`mitKd`/`pvVel`/`pfVel`/`isServoEnable`/`fsmMode`/`isConnected`/`mosTemperature`/`motorTemperature`/`motorVBus`/`motorErrorCode`/`motorErrorMsg` 等字段。
 
 ##### `low_get_inverse_kine(pose, refer_pos, tool=-1)`
 
-* 描述：执行底层逆运动学闭式求解。
-* 返回：`(success, tool, joint_pos)` 元组。
+- 描述：执行底层逆运动学闭式求解。
+- 返回：`(success, tool, joint_pos)` 元组。
 
 ##### `low_get_forward_kine(joint_pos, tool=-1)`
 
-* 描述：执行底层正运动学计算。
-* 返回：`(success, tool, pose)` 元组。
+- 描述：执行底层正运动学计算。
+- 返回：`(success, tool, pose)` 元组。
 
 ##### `low_get_dynamics(joint_pos, joint_vel, joint_acc)`
 
-* 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)分量。
-* 返回：`(success, tool, m_force, c_force, g_force)` 元组。
+- 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)分量。
+- 返回：`(success, tool, m_force, c_force, g_force)` 元组。
 
 ##### `low_get_jacobian(joint_pos)`
 
-* 描述：获取底层雅可比矩阵。
-* 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表 `list[list[float]]`，形状 `(rows, cols)`。
+- 描述：获取底层雅可比矩阵。
+- 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表 `list[list[float]]`，形状 `(rows, cols)`。
 
 ##### `low_get_nullspace(joint_pos, tolerance)`
 
-* 描述：获取底层零空间矩阵。
-* 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表。
+- 描述：获取底层零空间矩阵。
+- 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表。
 
 #### 底层状态属性（@property）
 
@@ -854,20 +768,20 @@ print("Cartesian pose:", pose)
 
 **臂状态（来自 RobotStatus）：**
 
-* `low_error_code` / `low_error_msg`: 错误码和信息
-* `low_arm_connected` / `low_arm_enable`: 连接和使能状态
-* `low_arm_status` / `low_arm_mode`: 臂状态和模式
+- `low_error_code` / `low_error_msg`: 错误码和信息
+- `low_arm_connected` / `low_arm_enable`: 连接和使能状态
+- `low_arm_status` / `low_arm_mode`: 臂状态和模式
 
 **关节状态（来自 RobotState）：**
 
-* `low_joint_cmd_pos` / `low_joint_cmd_vel` / `low_joint_cmd_tau`: 指令值
-* `low_joint_pos` / `low_joint_vel` / `low_joint_tau`: 实际值
+- `low_joint_cmd_pos` / `low_joint_cmd_vel` / `low_joint_cmd_tau`: 指令值
+- `low_joint_pos` / `low_joint_vel` / `low_joint_tau`: 实际值
 
 **夹爪状态（来自 gripperStatus / gripperState）：**
 
-* `low_gripper_connected` / `low_gripper_enable` / `low_gripper_err_code` / `low_gripper_mode`
-* `low_gripper_cmd_pos` / `low_gripper_cmd_vel` / `low_gripper_cmd_tau`
-* `low_gripper_pos` / `low_gripper_vel` / `low_gripper_tau`
+- `low_gripper_connected` / `low_gripper_enable` / `low_gripper_err_code` / `low_gripper_mode`
+- `low_gripper_cmd_pos` / `low_gripper_cmd_vel` / `low_gripper_cmd_tau`
+- `low_gripper_pos` / `low_gripper_vel` / `low_gripper_tau`
 
 **python**
 
@@ -892,9 +806,9 @@ robot.set_low_mode(False)
 
 #### `on_error(callback)`
 
-* 描述：注册错误处理回调。
-* 参数：
-  * `callback`: 函数签名 `fn(error_info)`，其中 `error_info` 是包含错误详情的字典。
+- 描述：注册错误处理回调。
+- 参数：
+  - `callback`: 函数签名 `fn(error_info)`，其中 `error_info` 是包含错误详情的字典。
 
 **python**
 
@@ -907,9 +821,9 @@ robot.on_error(my_error_handler)
 
 #### `on_task_finish(callback)`
 
-* 描述：注册任务完成回调。
-* 参数：
-  * `callback`: 函数签名 `fn(task_key)`。
+- 描述：注册任务完成回调。
+- 参数：
+  - `callback`: 函数签名 `fn(task_key)`。
 
 **python**
 
@@ -922,9 +836,9 @@ robot.on_task_finish(task_done)
 
 #### `on_update(callback)`
 
-* 描述：注册状态更新回调。
-* 参数：
-  * `callback`: 函数签名 `fn(Unix_time)`，参数为当前状态更新的 Unix 时间戳（Unix_time_stamp，double类型）。
+- 描述：注册状态更新回调。
+- 参数：
+  - `callback`: 函数签名 `fn(Unix_time)`，参数为当前状态更新的 Unix 时间戳（Unix_time_stamp，double类型）。
 
 **python**
 
@@ -939,10 +853,10 @@ robot.on_update(state_updated)
 
 ## 注意事项
 
-* 所有请求都是同步阻塞的，除非 `is_sync=False` 的运动接口。
-* 状态属性（如 `joint_pos`）需在连接并收到状态更新后才能使用。
-* 底层透传接口（`low_*`）使用前需先调用 `set_low_mode(True)` 进入底层模式，使用完毕后调用 `set_low_mode(False)` 退出。
-* 底层控制指令（`low_pv_command` 等）会自动对输入进行非法值检查、维度校验和限幅处理。
+- 所有请求都是同步阻塞的，除非 `is_sync=False` 的运动接口。
+- 状态属性（如 `joint_pos`）需在连接并收到状态更新后才能使用。
+- 底层透传接口（`low_*`）使用前需先调用 `set_low_mode(True)` 进入底层模式，使用完毕后调用 `set_low_mode(False)` 退出。
+- 底层控制指令（`low_pv_command` 等）会自动对输入进行非法值检查、维度校验和限幅处理。
 
 ## 许可证
 

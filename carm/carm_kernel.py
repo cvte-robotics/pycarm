@@ -838,7 +838,7 @@ class Carm:
     #         return res.get("result") == "ok"
     #     return False
 
-    def set_collision_config(self, flag=True, level=10) -> bool:
+    def set_collision_config(self, flag=True, level=0) -> bool:
         """
         设置碰撞检测
 
@@ -934,6 +934,28 @@ class Carm:
         res = self.request({
             "command": "setDebugMode",
             "trigger": flag
+        })
+        return res.get("recv") == "Task_Recieve"
+
+    def set_drag_params(self, torque_factor, friction_compensation_factor) -> bool:
+        """
+        设置拖动模式参数（转矩因子和摩擦力补偿系数）
+
+        :param torque_factor: list, 转矩因子列表，范围 [0, 2]
+
+        :param friction_compensation_factor: list, 摩擦力补偿系数列表，范围 [0, 2]
+
+        :return: bool, 执行是否成功
+        """
+        if not self.__check_input_valid(torque_factor) or not self.__check_input_valid(friction_compensation_factor):
+            return False
+        res = self.request({
+            "command": "setDragModeParams",
+            "arm_index": self.arm_index,
+            "params": {
+                "torque_factor": list(torque_factor),
+                "fric_compensation_factor": list(friction_compensation_factor)
+            }
         })
         return res.get("recv") == "Task_Recieve"
 

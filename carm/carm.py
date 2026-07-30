@@ -89,24 +89,12 @@ class CArmSingleCol:
 
     def set_drag_params(self, torque_factor: list,
                         friction_compensation_factor: list) -> int:
-        """设置拖动模式参数（C++ ``setDragModeParams``）。"""
-        tf = [max(0.0, min(2.0, float(v))) for v in torque_factor]
-        ff = [max(0.0, min(2.0, float(v))) for v in friction_compensation_factor]
-        res = self._impl.request({
-            "command": "setDragModeParams",
-            "arm_index": self._arm_index,
-            "torque_factor": tf,
-            "friction_compensation_factor": ff,
-        })
-        return 1 if res.get("recv") == "Task_Recieve" else -1
+        return _to_int(self._impl.set_drag_params(torque_factor,
+                                                   friction_compensation_factor))
 
     def set_collision_config(self, enable_flag: bool = True,
                              sensitivity_level: int = 0) -> int:
-        # Python Carm 用 level(0-10)，C++ 用 sensitivity_level(0-2, 0最高)
-        # 映射：sensitivity_level 0→level 2, 1→level 5, 2→level 10
-        level_map = {0: 2, 1: 5, 2: 10}
-        level = level_map.get(sensitivity_level, 2)
-        return _to_int(self._impl.set_collision_config(flag=enable_flag, level=level))
+        return _to_int(self._impl.set_collision_config(flag=enable_flag, level=sensitivity_level))
 
     def set_tool_index(self, index: int) -> int:
         return _to_int(self._impl.set_tool_index(index))
@@ -259,20 +247,6 @@ class CArmSingleCol:
     def track_pose(self, targets: list, eeff_pos: float = -1) -> int:
         end_effector = eeff_pos if eeff_pos >= 0 else None
         return _to_int(self._impl.track_pose(targets, end_effector))
-
-    def track_pass(self, targets: list, eeff_pos: float = -1) -> int:
-        """关节直接跟踪（低层级控制，无轨迹规划）。
-
-        对应 C++ ``passTrackingTasks`` 命令。
-        """
-        req = {
-            "command": "passTrackingTasks",
-            "arm_index": self._arm_index,
-            "data": {"way_point": list(targets)},
-        }
-        if eeff_pos >= 0:
-            req["data"]["grp_point"] = max(0.0, min(0.08, eeff_pos))
-        return _to_int(self._impl.send_only(req))
 
     # ------------------------------------------------------------------ #
     #  运动指令
@@ -883,9 +857,6 @@ class CArmDualBot:
     def track_left_pose(self, targets: list, eeff_pos: float = -1) -> int:
         return self._left.track_pose(targets, eeff_pos)
 
-    def track_left_pass(self, targets: list, eeff_pos: float = -1) -> int:
-        return self._left.track_pass(targets, eeff_pos)
-
     def move_left_joint(self, target_pos: list, desire_time: float = -1,
                         is_sync: bool = True) -> int:
         return self._left.move_joint(target_pos, desire_time, is_sync)
@@ -1161,9 +1132,6 @@ class CArmDualBot:
 
     def track_right_pose(self, targets: list, eeff_pos: float = -1) -> int:
         return self._right.track_pose(targets, eeff_pos)
-
-    def track_right_pass(self, targets: list, eeff_pos: float = -1) -> int:
-        return self._right.track_pass(targets, eeff_pos)
 
     def move_right_joint(self, target_pos: list, desire_time: float = -1,
                          is_sync: bool = True) -> int:

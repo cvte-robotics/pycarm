@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "carm"
-version = "0.1.20260716"
+version = "0.1.20260715"
 authors = [
     {name = "Yujun Huang", email = "huangyujun@cvte.com"},
     {name = "Yong Zhao", email = "zhaoyong11933@cvte.com"}
@@ -21,7 +21,6 @@ classifiers = [
 ]
 
 [project.scripts]
-carm_ros2 = "carm.carm_ros2:main"
 carm_scan = "carm.carm_scan:main"
 
 [tool.setuptools]
@@ -32,6 +31,5 @@ carm = [
     "__init__.py",
     "carm.py",
     "carm_kernel.py",
-    "carm_ros2.py",
     "carm_scan.py",
 ]
