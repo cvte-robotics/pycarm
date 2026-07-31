@@ -419,33 +419,35 @@ class CArmSingleCol:
 
     def _dispatch_joint(self, store, msg):
         st = self._impl._arm_state
-        t = st.get("time", 0.0)
+        t = st.get("Unix_time_stamp", 0.0)
+        reality = st.get("reality", {})
         for cbk in store.values():
-            cbk(t, st.get("joint_pos", []), st.get("joint_vel", []),
-                 st.get("joint_tau", []))
+            cbk(t, reality.get("pose", []), reality.get("vel", []),
+                 reality.get("torque", []))
 
     def _dispatch_pose(self, store, msg):
         st = self._impl._arm_state
-        t = st.get("time", 0.0)
+        t = st.get("Unix_time_stamp", 0.0)
         for cbk in store.values():
-            cbk(t, st.get("cart_pose", []))
+            cbk(t, st.get("pose", []))
 
     def _dispatch_plan_joint(self, store, msg):
         st = self._impl._arm_state
-        t = st.get("time", 0.0)
+        t = st.get("Unix_time_stamp", 0.0)
+        plan = st.get("plan", {})
         for cbk in store.values():
-            cbk(t, st.get("plan_joint_pos", []), st.get("plan_joint_vel", []),
-                 st.get("plan_joint_tau", []))
+            cbk(t, plan.get("pose", []), plan.get("vel", []),
+                 plan.get("torque", []))
 
     def _dispatch_plan_pose(self, store, msg):
         st = self._impl._arm_state
-        t = st.get("time", 0.0)
+        t = st.get("Unix_time_stamp", 0.0)
         for cbk in store.values():
-            cbk(t, st.get("plan_cart_pose", []))
+            cbk(t, st.get("plan", {}).get("cart_pose", []))
 
     def _dispatch_ext_force(self, store, msg):
         st = self._impl._arm_state
-        t = st.get("time", 0.0)
+        t = st.get("Unix_time_stamp", 0.0)
         for cbk in store.values():
             cbk(t, st.get("joint_external_tau", []),
                  st.get("cart_external_force", []))
