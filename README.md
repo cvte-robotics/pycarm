@@ -359,7 +359,10 @@ robot.set_control_mode(3)  # 进入拖动模式
 
 #### `set_passthrough_data(mode, can_id, data)`
 
-- 描述：设置透传数据。
+- 描述：设置透传数据（仅单臂 `Carm` / `CArmSingleCol` 可用，直接经由控制器 CAN 总线透传）。
+- 限制：`CArmDualBot`（D3 人形双臂）底层通信总线为 EtherCAT，不支持该 CAN 透传接口，
+  已屏蔽、不对外暴露；双臂场景请改用 `set_left_ecat_passthrough_data` /
+  `set_right_ecat_passthrough_data`（见下文 `set_ecat_passthrough_data`）。
 - 参数：
   - `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
   - `can_id` (int): CAN ID。
