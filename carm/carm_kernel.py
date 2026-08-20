@@ -1,19 +1,27 @@
 import websocket
 import threading
 import json
+import logging
 import uuid
 import time
 import math
 
+_LOGGER = logging.getLogger(__name__)
+
+ECAT_CAN_FLAG_EXTENDED = 1 << 0
+ECAT_CAN_FLAG_REMOTE = 1 << 1
+ECAT_CAN_FLAG_BRS = 1 << 3
+ECAT_CAN_FLAG_ESI = 1 << 4
+
 class Carm:
-    def __init__(self, addr="10.42.0.101", arm_index=0):
+    def __init__(self, addr="10.42.0.101", arm_index=0, port=8090):
         self.state = None
         self.low_state_data = None
         self.last_msg = None
         self.ws = None
         self.arm_index = arm_index
         self.addr = addr
-        self.port = 8090
+        self.port = port
         self._retry_delay = 1.0
         self._max_delay = 10.0
 
@@ -331,6 +339,21 @@ class Carm:
         return eeff.get("eeff_tau", [])
 
     @property
+    def end_effector_motor_pos(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_pos", [])
+
+    @property
+    def end_effector_motor_vel(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_vel", [])
+
+    @property
+    def end_effector_motor_tau(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_tau", [])
+
+    @property
     def plan_end_effector_pos(self):
         """规划末端执行器位置（单位：m or rad）"""
         eeff = self._arm_state.get("eeff", {})
@@ -347,6 +370,21 @@ class Carm:
         """规划末端执行器力矩（单位：N）"""
         eeff = self._arm_state.get("eeff", {})
         return eeff.get("eeff_plan_tau", [])
+
+    @property
+    def plan_end_effector_motor_pos(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_plan_pos", [])
+
+    @property
+    def plan_end_effector_motor_vel(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_plan_vel", [])
+
+    @property
+    def plan_end_effector_motor_tau(self):
+        eeff = self._arm_state.get("eeff", {})
+        return eeff.get("eeff_motor_plan_tau", [])
     
     @property
     def end_effector_type(self):
@@ -673,9 +711,110 @@ class Carm:
                 return res.get("ret", 0) == 1, None, None
         else:
             return False , None, None
-        
-    
-    def set_end_effector(self, dof, pos, vel, tau) -> bool:
+
+    def set_ecat_passthrough_data(self, mode, frame, timeout_ms=100) -> tuple:
+        """通过 EtherCAT 透传板同步发送或接收完整 CAN/CAN FD 帧。
+
+        返回 ``(code, response_frame)``。code 含义：1 成功；-1 SDK 通信失败；
+        -2 后端拒绝或执行失败；-3 后端响应格式异常；-4 Python 参数序列化失败。
+        """
+        if not isinstance(frame, dict):
+            _LOGGER.error("set_ecat_passthrough_data: frame 必须是 dict")
+            return -4, None
+
+        sends_frame = mode in (0, 2)
+        request_frame = {"can_fd": frame.get("can_fd", False)}
+        if sends_frame:
+            if "can_id" in frame:
+                request_frame["can_id"] = frame["can_id"]
+            if "flags" in frame:
+                request_frame["flags"] = frame["flags"]
+            if "data" in frame:
+                data = frame["data"]
+                try:
+                    request_frame["data"] = data if isinstance(data, str) else bytes(data).hex()
+                except (TypeError, ValueError):
+                    _LOGGER.error("set_ecat_passthrough_data: data 无法转换为字节数据")
+                    return -4, None
+
+        request_data = {
+            "command": "setEcatPassthroughData",
+            "arm_index": self.arm_index,
+            "mode": mode,
+            "data": request_frame,
+        }
+        if mode == 2:
+            request_data["timeout_ms"] = timeout_ms
+
+        try:
+            json.dumps(request_data)
+        except (TypeError, ValueError):
+            _LOGGER.error("set_ecat_passthrough_data: 请求参数无法序列化为 JSON")
+            return -4, None
+
+        request_timeout = 6.0 if mode == 2 else 1.0
+        res = self.request(request_data, timeout=request_timeout)
+        recv = res.get("recv")
+        if recv != "Task_Recieve":
+            error_msg = res.get("error_msg") or res.get("errMsg") or "后端拒绝请求"
+            _LOGGER.error("set_ecat_passthrough_data: %s", error_msg)
+            if "errMsg" in res and "error_msg" not in res:
+                return -1, None
+            return -2, None
+        if type(res.get("ret")) is not bool:
+            _LOGGER.error("set_ecat_passthrough_data: 后端响应缺少有效的 ret 字段")
+            return -3, None
+        if not res["ret"]:
+            error_msg = res.get("error_msg") or "后端透传操作失败"
+            _LOGGER.error("set_ecat_passthrough_data: %s", error_msg)
+            return -2, None
+
+        response = res.get("data")
+        if not isinstance(response, dict):
+            _LOGGER.error("set_ecat_passthrough_data: 后端响应缺少有效的 data 字段")
+            return -3, None
+        response_can_id = response.get("can_id")
+        response_flags = response.get("flags")
+        response_can_fd = response.get("can_fd")
+        response_length = response.get("length")
+        response_data = response.get("data")
+        if (type(response_can_id) is not int or response_can_id < 0 or
+                type(response_flags) is not int or not 0 <= response_flags <= 0xFF or
+                type(response_can_fd) is not bool or type(response_length) is not int or
+                response_length < 0 or not isinstance(response_data, str)):
+            _LOGGER.error("set_ecat_passthrough_data: 后端返回帧字段格式异常")
+            return -3, None
+
+        try:
+            if len(response_data) % 2 != 0:
+                raise ValueError("十六进制字符串长度必须为偶数")
+            payload = bytes.fromhex(response_data)
+        except ValueError:
+            _LOGGER.error("set_ecat_passthrough_data: 后端返回的 data 不是有效十六进制数据")
+            return -3, None
+        if response_length != len(payload) or len(payload) > (64 if response_can_fd else 8):
+            _LOGGER.error("set_ecat_passthrough_data: 后端返回帧长度异常")
+            return -3, None
+
+        allowed_response_flags = (
+            ECAT_CAN_FLAG_EXTENDED | ECAT_CAN_FLAG_BRS | ECAT_CAN_FLAG_ESI
+            if response_can_fd else ECAT_CAN_FLAG_EXTENDED | ECAT_CAN_FLAG_REMOTE
+        )
+        max_response_can_id = (
+            0x1FFFFFFF if response_flags & ECAT_CAN_FLAG_EXTENDED else 0x7FF
+        )
+        if response_flags & ~allowed_response_flags or response_can_id > max_response_can_id:
+            _LOGGER.error("set_ecat_passthrough_data: 后端返回帧 flags 或 can_id 异常")
+            return -3, None
+
+        return 1, {
+            "can_id": response_can_id,
+            "flags": response_flags,
+            "can_fd": response_can_fd,
+            "data": list(payload),
+        }
+
+    def set_end_effector(self, dof, pos, vel, tau, control_motor=False) -> bool:
         """
         设置末端执行器（夹爪）的位置、速度、力矩，指定自由度 dof。
         输入可以是单个数值或列表，长度不足 dof 则补零，超出则截断。
@@ -688,23 +827,26 @@ class Carm:
 
         :param tau: float/list, 力矩值或列表（单位：N）
 
+        :param control_motor: bool, ``True`` 直接控制末端电机，默认 ``False``。
+
         :return: bool, 执行是否成功
         """
         if not self.__check_input_valid(pos) or not self.__check_input_valid(vel) or not self.__check_input_valid(tau):
             print(f"Error: set_end_effector input contains NaN or Inf")
             return False
 
-        self.__clip_eeff(dof, pos, vel, tau)
+        self.__clip_eeff(dof, pos, vel, tau, control_motor)
         res = self.request({
             "command": "setEffectorCtr",
             "arm_index": self.arm_index,
             "pos": pos,
             "vel": vel,
-            "tau": tau
+            "tau": tau,
+            "control_motor": control_motor
         })
         return res.get("recv") == "Task_Recieve"
 
-    def set_eeff(self, pos, vel, tau) -> bool:
+    def set_eeff(self, pos, vel, tau, control_motor=False) -> bool:
         """
         统一末端执行器控制接口，设置末端执行器的位置、速度、力矩。
         自动推断自由度，pos/vel/tau 维度需一致。
@@ -715,6 +857,8 @@ class Carm:
 
         :param tau: list, 力矩值列表（单位：N）
 
+        :param control_motor: bool, ``True`` 直接控制末端电机，默认 ``False``。
+
         :return: bool, 执行是否成功
         """
         dof = max(len(pos) if isinstance(pos, list) else 0,
@@ -723,7 +867,7 @@ class Carm:
         if dof == 0 or len(tau) != dof or len(vel) != dof:
             print(f"Error: set_eeff dof={dof}, pos/vel/tau 维度不一致")
             return False
-        return self.set_end_effector(dof, pos, vel, tau)
+        return self.set_end_effector(dof, pos, vel, tau, control_motor)
 
     def set_gripper(self, pos, tau=10) -> bool:
         """设置夹爪位置和力矩（pos单位：m，tau单位：N）"""
@@ -1914,7 +2058,8 @@ class Carm:
                     "error_arm_index": error_arm_index
                 }
                 self.call_back.get("onCarmError", lambda msg: None)(error_info)
-                self.__abort_all_tasks()
+                if message.get("error") != 3001:
+                    self.__abort_all_tasks()
 
         # 任务完成解析（只处理当前臂）
         if len(message["arm"]) > self.arm_index:
@@ -2085,7 +2230,7 @@ class Carm:
             joints_vel[i] = self.__clip(v, -vmax[i], vmax[i])
         return True
     
-    def __clip_eeff(self, dof, eeff_pos, eeff_vel, eeff_tau):
+    def __clip_eeff(self, dof, eeff_pos, eeff_vel, eeff_tau, control_motor=False):
         def auto_pad(lst, target_len, default_val=0.0):
             if isinstance(lst, (int, float)):
                 # 单个数值，转为列表，然后补零或截断
@@ -2106,10 +2251,18 @@ class Carm:
         if dof != self.eeff_limit.get("dof", 0):
             return False
 
-        lower = self.eeff_limit.get("eeff_lower", [])
-        upper = self.eeff_limit.get("eeff_upper", [])
-        vel = self.eeff_limit.get("eeff_vel", [])
-        tau = self.eeff_limit.get("eeff_tau", [])
+        if control_motor:
+            lower = self.eeff_limit.get("motor_lower", self.eeff_limit.get("eeff_lower", []))
+            upper = self.eeff_limit.get("motor_upper", self.eeff_limit.get("eeff_upper", []))
+            vel = self.eeff_limit.get("motor_vel", self.eeff_limit.get("eeff_vel", []))
+            tau = self.eeff_limit.get("motor_tau", self.eeff_limit.get("eeff_tau", []))
+        else:
+            lower = self.eeff_limit.get("eeff_lower", [])
+            upper = self.eeff_limit.get("eeff_upper", [])
+            vel = self.eeff_limit.get("eeff_vel", [])
+            tau = self.eeff_limit.get("eeff_tau", [])
+        if not all(len(values) == dof for values in (lower, upper, vel, tau)):
+            return False
 
         # 自动找齐
         eeff_pos[:] = auto_pad(eeff_pos, dof)
@@ -2119,9 +2272,9 @@ class Carm:
         for i, v in enumerate(eeff_pos):
             eeff_pos[i] = self.__clip(v, lower[i], upper[i])
         for i, v in enumerate(eeff_tau):
-            eeff_tau[i] = self.__clip(v, 0.0, tau[i])
+            eeff_tau[i] = self.__clip(v, -tau[i], tau[i])
         for i, v in enumerate(eeff_vel):
-            eeff_vel[i] = self.__clip(v, 0.0, vel[i])
+            eeff_vel[i] = self.__clip(v, -vel[i], vel[i])
         return True
 
 
@@ -2492,7 +2645,7 @@ class Carm:
             return False, self._low_state
         pos, vel, tau = list(pos), list(vel), list(tau)
         dof = max(len(pos), len(vel), len(tau))
-        if not self.__clip_eeff(dof, pos, vel, tau):
+        if not self.__clip_eeff(dof, pos, vel, tau, control_motor=True):
             return False, self._low_state
         res = self.request({"command": "setEndEffectorCtr", "arm_index": self.arm_index,
                            "eeff_pos": pos, "eeff_vel": vel, "eeff_tau": tau})

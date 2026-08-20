@@ -30,16 +30,34 @@ class CArmSingleCol:
     """
 
     def __init__(self, server_ip: str = "10.42.0.101", port: int = 8090,
-                 timeout: float = 1.0, arm_index: int = 0):
-        self._impl = Carm(addr=server_ip, arm_index=arm_index)
+                 timeout: float = 1, arm_index: int = 0,
+                 _validate_arm: bool = True):
+        self._impl = Carm(addr=server_ip, arm_index=arm_index, port=port)
         self._arm_index = arm_index
+        self._validate_arm = _validate_arm
+        # 对齐 C++ CArmSingleCol：A3（六轴）系列单臂专用，构造时若已连接则校验臂型
+        time.sleep(0.1)
+        if self._validate_arm and self._impl.is_connected() \
+                and not self._is_specified_arm():
+            self._impl.disconnect()
+            raise RuntimeError(
+                "CArmSingleCol is designed for A3 series, "
+                "but the arm is not A3 series")
 
     # ------------------------------------------------------------------ #
     #  连接 / 断开
     # ------------------------------------------------------------------ #
     def connect(self, server_ip: str = "10.42.0.101", port: int = 8090,
-                timeout: float = 1.0) -> int:
+                timeout: float = 1) -> int:
         ok = self._impl.connect(addr=server_ip, port=port, timeout=timeout)
+        time.sleep(0.1)
+        # 对齐 C++ CArmSingleCol::connect：连接后校验臂型，不符合抛出异常
+        if self._validate_arm and self._impl.is_connected() \
+                and not self._is_specified_arm():
+            self._impl.disconnect()
+            raise RuntimeError(
+                "CArmSingleCol is designed for A3 series, "
+                "but the arm is not A3 series")
         return _to_int(ok)
 
     def disconnect(self) -> int:
@@ -51,6 +69,28 @@ class CArmSingleCol:
 
     def is_connected(self) -> bool:
         return self._impl.is_connected()
+
+    # ------------------------------------------------------------------ #
+    #  臂型校验（对齐 C++ CArmSingleCol::_is_specified_arm）
+    # ------------------------------------------------------------------ #
+    def _is_specified_arm(self) -> bool:
+        """校验当前连接的机械臂是否为 A3（六轴）系列。
+
+        状态上报周期为 20ms，这里轮询等待最多 40ms 以拿到有效状态。
+        """
+        status = {}
+        before = time.monotonic()
+        while self._impl.is_connected():
+            status = self._impl._arm_state
+            if status.get("arm_dof", 0) == 6 \
+                    and "A3" in status.get("arm_name", ""):
+                return True
+            if time.monotonic() - before > 0.04:
+                break
+            time.sleep(0.01)
+        print("CArmSingleCol is designed for A3 series, but the arm is "
+              f"{status.get('arm_name', '')} with {status.get('arm_dof', 0)} dof")
+        return False
 
     # ------------------------------------------------------------------ #
     #  基础控制
@@ -74,6 +114,19 @@ class CArmSingleCol:
             data.clear()
             data.extend(ret_data)
         return _to_int(ok)
+
+    def set_ecat_passthrough_data(self, mode: int, frame: dict,
+                                  timeout_ms: int = 100) -> int:
+        """通过 EtherCAT 透传板同步发送或接收完整 CAN/CAN FD 帧。
+
+        返回值：1 成功；-1 SDK 通信失败；-2 后端拒绝或执行失败；
+        -3 后端响应格式异常；-4 Python 参数序列化失败。
+        """
+        code, response_frame = self._impl.set_ecat_passthrough_data(mode, frame, timeout_ms)
+        if code == 1:
+            frame.clear()
+            frame.update(response_frame)
+        return code
 
     def emergency_stop(self) -> int:
         return _to_int(self._impl.stop(type=3))
@@ -168,6 +221,15 @@ class CArmSingleCol:
     def get_eeff_tau(self) -> list:
         return self._impl.end_effector_tau
 
+    def get_eeff_motor_pos(self) -> list:
+        return self._impl.end_effector_motor_pos
+
+    def get_eeff_motor_vel(self) -> list:
+        return self._impl.end_effector_motor_vel
+
+    def get_eeff_motor_tau(self) -> list:
+        return self._impl.end_effector_motor_tau
+
     def get_plan_eeff_pos(self) -> list:
         return self._impl.plan_end_effector_pos
 
@@ -176,6 +238,15 @@ class CArmSingleCol:
 
     def get_plan_eeff_tau(self) -> list:
         return self._impl.plan_end_effector_tau
+
+    def get_plan_eeff_motor_pos(self) -> list:
+        return self._impl.plan_end_effector_motor_pos
+
+    def get_plan_eeff_motor_vel(self) -> list:
+        return self._impl.plan_end_effector_motor_vel
+
+    def get_plan_eeff_motor_tau(self) -> list:
+        return self._impl.plan_end_effector_motor_tau
 
     def get_eeff_type(self) -> str:
         return self._impl.end_effector_type
@@ -186,8 +257,8 @@ class CArmSingleCol:
     def get_eeff_connect(self) -> bool:
         return self._impl.end_effector_is_connect
 
-    def set_eeff(self, pos: list, vel: list, tau: list) -> int:
-        return _to_int(self._impl.set_eeff(pos, vel, tau))
+    def set_eeff(self, pos: list, vel: list, tau: list, control_motor: bool = False) -> int:
+        return _to_int(self._impl.set_eeff(pos, vel, tau, control_motor))
 
     # ------------------------------------------------------------------ #
     #  deprecated: 旧夹爪/灵巧手接口，内部转发到 eeff 等价方法
@@ -281,7 +352,7 @@ class CArmSingleCol:
     # ------------------------------------------------------------------ #
     #  示教 / 轨迹复现
     # ------------------------------------------------------------------ #
-    def trajectory_teach(self, off_on: bool, name: str = "") -> int:
+    def trajectory_teach(self, off_on: bool, name: str) -> int:
         return _to_int(self._impl.trajectory_teach(off_on, name))
 
     def trajectory_recorder(self, name: str, is_sync: bool = True) -> int:
@@ -345,47 +416,47 @@ class CArmSingleCol:
         return 1
 
     # ------------------------------------------------------------------ #
-    #  回调注册（key-based，对齐 C++）
+    #  回调注册（对齐 C++ 单回调语义）
     # ------------------------------------------------------------------ #
-    def register_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._register_keyed_cbk(key, cbk, "_joint_cbks",
+    def register_joint_cbk(self, cbk: Callable) -> None:
+        self._register_keyed_cbk("get_joint", cbk, "_joint_cbks",
                                  lambda c: self._impl.on_update(
                                      lambda msg: self._dispatch_joint(c, msg)))
 
-    def release_joint_cbk(self, key: str) -> None:
-        self._release_keyed_cbk(key, "_joint_cbks")
+    def release_joint_cbk(self) -> None:
+        self._release_keyed_cbk("get_joint", "_joint_cbks")
 
-    def register_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._register_keyed_cbk(key, cbk, "_pose_cbks",
+    def register_pose_cbk(self, cbk: Callable) -> None:
+        self._register_keyed_cbk("get_pose", cbk, "_pose_cbks",
                                  lambda c: self._impl.on_update(
                                      lambda msg: self._dispatch_pose(c, msg)))
 
-    def release_pose_cbk(self, key: str) -> None:
-        self._release_keyed_cbk(key, "_pose_cbks")
+    def release_pose_cbk(self) -> None:
+        self._release_keyed_cbk("get_pose", "_pose_cbks")
 
-    def register_plan_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._register_keyed_cbk(key, cbk, "_plan_joint_cbks",
+    def register_plan_joint_cbk(self, cbk: Callable) -> None:
+        self._register_keyed_cbk("get_cmd_joint", cbk, "_plan_joint_cbks",
                                  lambda c: self._impl.on_update(
                                      lambda msg: self._dispatch_plan_joint(c, msg)))
 
-    def release_plan_joint_cbk(self, key: str) -> None:
-        self._release_keyed_cbk(key, "_plan_joint_cbks")
+    def release_plan_joint_cbk(self) -> None:
+        self._release_keyed_cbk("get_cmd_joint", "_plan_joint_cbks")
 
-    def register_plan_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._register_keyed_cbk(key, cbk, "_plan_pose_cbks",
+    def register_plan_pose_cbk(self, cbk: Callable) -> None:
+        self._register_keyed_cbk("get_cmd_pose", cbk, "_plan_pose_cbks",
                                  lambda c: self._impl.on_update(
                                      lambda msg: self._dispatch_plan_pose(c, msg)))
 
-    def release_plan_pose_cbk(self, key: str) -> None:
-        self._release_keyed_cbk(key, "_plan_pose_cbks")
+    def release_plan_pose_cbk(self) -> None:
+        self._release_keyed_cbk("get_cmd_pose", "_plan_pose_cbks")
 
-    def register_external_force_cbk(self, key: str, cbk: Callable) -> None:
-        self._register_keyed_cbk(key, cbk, "_ext_force_cbks",
+    def register_external_force_cbk(self, cbk: Callable) -> None:
+        self._register_keyed_cbk("get_external_force", cbk, "_ext_force_cbks",
                                  lambda c: self._impl.on_update(
                                      lambda msg: self._dispatch_ext_force(c, msg)))
 
-    def release_external_force_cbk(self, key: str) -> None:
-        self._release_keyed_cbk(key, "_ext_force_cbks")
+    def release_external_force_cbk(self) -> None:
+        self._release_keyed_cbk("get_external_force", "_ext_force_cbks")
 
     def register_error_cbk(self, key: str, cbk: Callable) -> None:
         self._register_keyed_cbk(key, cbk, "_error_cbks",
@@ -603,20 +674,42 @@ class CArmDualBot:
     """
 
     def __init__(self, server_ip: str = "10.42.0.101", port: int = 8090,
-                 timeout: float = 1.0, left_index: int = 0,
-                 right_index: int = 1):
-        self._left = CArmSingleCol(server_ip, port, timeout, arm_index=left_index)
+                 timeout: float = 1, left_index: int = 0,
+                 right_index: int = 1, _validate_arm: bool = True):
+        # 内部组合的两个单臂不单独做 A3 校验，由 CArmDualBot 统一做 D3 校验
+        self._left = CArmSingleCol(server_ip, port, timeout, arm_index=left_index,
+                                   _validate_arm=False)
         time.sleep(0.1)  # 避免两个实例同时连接时出现端口冲突
-        self._right = CArmSingleCol(server_ip, port, timeout, arm_index=right_index)
+        self._right = CArmSingleCol(server_ip, port, timeout, arm_index=right_index,
+                                    _validate_arm=False)
+        self._validate_arm = _validate_arm
+        time.sleep(0.1)
+        # 对齐 C++ CArmDualBot：D3（人形双臂）专用，构造时若双臂已连接则校验臂型
+        if self._validate_arm and self._left.is_connected() \
+                and self._right.is_connected() and not self._is_specified_arm():
+            self._left.disconnect()
+            self._right.disconnect()
+            raise RuntimeError(
+                "CArmDualBot is designed for D3 series, "
+                "but the arm is not D3 series")
 
     # ================================================================== #
     #  共享方法
     # ================================================================== #
     def connect(self, server_ip: str = "10.42.0.101", port: int = 8090,
-                timeout: float = 1.0) -> int:
+                timeout: float = 1) -> int:
         rl = self._left.connect(server_ip, port, timeout)
         time.sleep(0.1)  # 避免两个实例同时连接时出现端口冲突
         rr = self._right.connect(server_ip, port, timeout)
+        time.sleep(0.1)
+        # 对齐 C++ CArmDualBot::connect：双臂连接后校验臂型，不符合抛出异常
+        if self._validate_arm and self._left.is_connected() \
+                and self._right.is_connected() and not self._is_specified_arm():
+            self._left.disconnect()
+            self._right.disconnect()
+            raise RuntimeError(
+                "CArmDualBot is designed for D3 series, "
+                "but the arm is not D3 series")
         return 1 if rl == 1 and rr == 1 else -1
 
     def disconnect(self) -> int:
@@ -628,6 +721,34 @@ class CArmDualBot:
     def is_connected(self) -> bool:
         return self._left.is_connected() and self._right.is_connected()
 
+    # ------------------------------------------------------------------ #
+    #  臂型校验（对齐 C++ CArmDualBot::_is_specified_arm）
+    # ------------------------------------------------------------------ #
+    def _is_specified_arm(self) -> bool:
+        """校验左右臂是否均为 D3（七轴人形双臂）系列。
+
+        状态上报周期为 20ms，这里轮询等待最多 40ms 以拿到有效状态。
+        """
+        before = time.monotonic()
+        status_l = self._left._impl._arm_state
+        status_r = self._right._impl._arm_state
+        while self._left.is_connected() and self._right.is_connected():
+            status_l = self._left._impl._arm_state
+            status_r = self._right._impl._arm_state
+            if status_l.get("arm_dof", 0) == 7 \
+                    and "D3" in status_l.get("arm_name", "") \
+                    and status_r.get("arm_dof", 0) == 7 \
+                    and "D3" in status_r.get("arm_name", ""):
+                return True
+            if time.monotonic() - before > 0.04:
+                break
+            time.sleep(0.01)
+        print("CArmDualBot left arm is designed for D3 series, but the arm is "
+              f"{status_l.get('arm_name', '')} with {status_l.get('arm_dof', 0)} dof")
+        print("CArmDualBot right arm is designed for D3 series, but the arm is "
+              f"{status_r.get('arm_name', '')} with {status_r.get('arm_dof', 0)} dof")
+        return False
+
     def set_ready(self) -> int:
         rl = self._left.set_ready()
         rr = self._right.set_ready()
@@ -638,15 +759,36 @@ class CArmDualBot:
         rr = self._right.set_servo_enable(enable)
         return 1 if rl == 1 and rr == 1 else -1
 
+    def set_left_servo_enable(self, enable: bool) -> int:
+        return self._left.set_servo_enable(enable)
+
+    def set_right_servo_enable(self, enable: bool) -> int:
+        return self._right.set_servo_enable(enable)
+
     def set_control_mode(self, mode: int) -> int:
         rl = self._left.set_control_mode(mode)
         rr = self._right.set_control_mode(mode)
         return 1 if rl == 1 and rr == 1 else -1
 
-    def set_passthrough_data(self, mode: int, can_id: int, data: list) -> int:
-        rl = self._left.set_passthrough_data(mode, can_id, data)
-        rr = self._right.set_passthrough_data(mode, can_id, data)
-        return 1 if rl == 1 and rr == 1 else -1
+    def set_left_control_mode(self, mode: int) -> int:
+        return self._left.set_control_mode(mode)
+
+    def set_right_control_mode(self, mode: int) -> int:
+        return self._right.set_control_mode(mode)
+
+    # def set_passthrough_data(self, mode: int, can_id: int, data: list) -> int:
+    #     rl = self._left.set_passthrough_data(mode, can_id, data)
+    #     return 1 if rl == 1 else -1
+
+    def set_left_ecat_passthrough_data(self, mode: int, frame: dict,
+                                       timeout_ms: int = 100) -> int:
+        """通过左臂 EtherCAT CAN 总线同步透传完整帧。"""
+        return self._left.set_ecat_passthrough_data(mode, frame, timeout_ms)
+
+    def set_right_ecat_passthrough_data(self, mode: int, frame: dict,
+                                        timeout_ms: int = 100) -> int:
+        """通过右臂 EtherCAT CAN 总线同步透传完整帧。"""
+        return self._right.set_ecat_passthrough_data(mode, frame, timeout_ms)
 
     def get_version(self) -> str:
         return self._left.get_version() + self._right.get_version()
@@ -662,9 +804,7 @@ class CArmDualBot:
         return 1 if rl == 1 and rr == 1 else -1
 
     def set_debug(self, flag: bool) -> int:
-        rl = self._left.set_debug(flag)
-        rr = self._right.set_debug(flag)
-        return 1 if rl == 1 and rr == 1 else -1
+        return self._left.set_debug(flag)
 
     def set_speed_level(self, level: float, response_level: int = 20) -> int:
         rl = self._left.set_speed_level(level, response_level)
@@ -677,10 +817,16 @@ class CArmDualBot:
         rr = self._right.set_collision_config(enable_flag, sensitivity_level)
         return 1 if rl == 1 and rr == 1 else -1
 
+    def set_left_collision_config(self, enable_flag: bool = True,
+                                  sensitivity_level: int = 0) -> int:
+        return self._left.set_collision_config(enable_flag, sensitivity_level)
+
+    def set_right_collision_config(self, enable_flag: bool = True,
+                                   sensitivity_level: int = 0) -> int:
+        return self._right.set_collision_config(enable_flag, sensitivity_level)
+
     def set_low_mode(self, flag: bool) -> int:
-        rl = self._left.set_low_mode(flag)
-        rr = self._right.set_low_mode(flag)
-        return 1 if rl == 1 and rr == 1 else -1
+        return self._left.set_low_mode(flag)
 
     def register_error_cbk(self, key: str, cbk: Callable) -> None:
         self._left.register_error_cbk(key, cbk)
@@ -745,35 +891,35 @@ class CArmDualBot:
     def get_left_cart_external_force(self) -> list:
         return self._left.get_cart_external_force()
 
-    def register_left_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._left.register_joint_cbk(key, cbk)
+    def register_left_joint_cbk(self, cbk: Callable) -> None:
+        self._left.register_joint_cbk(cbk)
 
-    def release_left_joint_cbk(self, key: str) -> None:
-        self._left.release_joint_cbk(key)
+    def release_left_joint_cbk(self) -> None:
+        self._left.release_joint_cbk()
 
-    def register_left_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._left.register_pose_cbk(key, cbk)
+    def register_left_pose_cbk(self, cbk: Callable) -> None:
+        self._left.register_pose_cbk(cbk)
 
-    def release_left_pose_cbk(self, key: str) -> None:
-        self._left.release_pose_cbk(key)
+    def release_left_pose_cbk(self) -> None:
+        self._left.release_pose_cbk()
 
-    def register_left_plan_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._left.register_plan_joint_cbk(key, cbk)
+    def register_left_plan_joint_cbk(self, cbk: Callable) -> None:
+        self._left.register_plan_joint_cbk(cbk)
 
-    def release_left_plan_joint_cbk(self, key: str) -> None:
-        self._left.release_plan_joint_cbk(key)
+    def release_left_plan_joint_cbk(self) -> None:
+        self._left.release_plan_joint_cbk()
 
-    def register_left_plan_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._left.register_plan_pose_cbk(key, cbk)
+    def register_left_plan_pose_cbk(self, cbk: Callable) -> None:
+        self._left.register_plan_pose_cbk(cbk)
 
-    def release_left_plan_pose_cbk(self, key: str) -> None:
-        self._left.release_plan_pose_cbk(key)
+    def release_left_plan_pose_cbk(self) -> None:
+        self._left.release_plan_pose_cbk()
 
-    def register_left_external_force_cbk(self, key: str, cbk: Callable) -> None:
-        self._left.register_external_force_cbk(key, cbk)
+    def register_left_external_force_cbk(self, cbk: Callable) -> None:
+        self._left.register_external_force_cbk(cbk)
 
-    def release_left_external_force_cbk(self, key: str) -> None:
-        self._left.release_external_force_cbk(key)
+    def release_left_external_force_cbk(self) -> None:
+        self._left.release_external_force_cbk()
 
     # ------------------------------------------------------------------ #
     #  左臂末端执行器（通用 eeff）
@@ -790,6 +936,15 @@ class CArmDualBot:
     def get_left_eeff_tau(self) -> list:
         return self._left.get_eeff_tau()
 
+    def get_left_eeff_motor_pos(self) -> list:
+        return self._left.get_eeff_motor_pos()
+
+    def get_left_eeff_motor_vel(self) -> list:
+        return self._left.get_eeff_motor_vel()
+
+    def get_left_eeff_motor_tau(self) -> list:
+        return self._left.get_eeff_motor_tau()
+
     def get_left_plan_eeff_pos(self) -> list:
         return self._left.get_plan_eeff_pos()
 
@@ -798,6 +953,15 @@ class CArmDualBot:
 
     def get_left_plan_eeff_tau(self) -> list:
         return self._left.get_plan_eeff_tau()
+
+    def get_left_plan_eeff_motor_pos(self) -> list:
+        return self._left.get_plan_eeff_motor_pos()
+
+    def get_left_plan_eeff_motor_vel(self) -> list:
+        return self._left.get_plan_eeff_motor_vel()
+
+    def get_left_plan_eeff_motor_tau(self) -> list:
+        return self._left.get_plan_eeff_motor_tau()
 
     def get_left_eeff_type(self) -> str:
         return self._left.get_eeff_type()
@@ -808,8 +972,9 @@ class CArmDualBot:
     def get_left_eeff_connect(self) -> bool:
         return self._left.get_eeff_connect()
 
-    def set_left_eeff(self, pos: list, vel: list, tau: list) -> int:
-        return self._left.set_eeff(pos, vel, tau)
+    def set_left_eeff(self, pos: list, vel: list, tau: list,
+                      control_motor: bool = False) -> int:
+        return self._left.set_eeff(pos, vel, tau, control_motor)
 
     # ------------------------------------------------------------------ #
     #  deprecated: 左臂旧夹爪/灵巧手接口
@@ -897,7 +1062,7 @@ class CArmDualBot:
     def get_left_tool_coordinate(self, index: int) -> list:
         return self._left.get_tool_coordinate(index)
 
-    def trajectory_teach_left(self, off_on: bool, name: str = "") -> int:
+    def trajectory_teach_left(self, off_on: bool, name: str) -> int:
         return self._left.trajectory_teach(off_on, name)
 
     def trajectory_recorder_left(self, name: str, is_sync: bool = True) -> int:
@@ -1021,35 +1186,35 @@ class CArmDualBot:
     def get_right_cart_external_force(self) -> list:
         return self._right.get_cart_external_force()
 
-    def register_right_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._right.register_joint_cbk(key, cbk)
+    def register_right_joint_cbk(self, cbk: Callable) -> None:
+        self._right.register_joint_cbk(cbk)
 
-    def release_right_joint_cbk(self, key: str) -> None:
-        self._right.release_joint_cbk(key)
+    def release_right_joint_cbk(self) -> None:
+        self._right.release_joint_cbk()
 
-    def register_right_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._right.register_pose_cbk(key, cbk)
+    def register_right_pose_cbk(self, cbk: Callable) -> None:
+        self._right.register_pose_cbk(cbk)
 
-    def release_right_pose_cbk(self, key: str) -> None:
-        self._right.release_pose_cbk(key)
+    def release_right_pose_cbk(self) -> None:
+        self._right.release_pose_cbk()
 
-    def register_right_plan_joint_cbk(self, key: str, cbk: Callable) -> None:
-        self._right.register_plan_joint_cbk(key, cbk)
+    def register_right_plan_joint_cbk(self, cbk: Callable) -> None:
+        self._right.register_plan_joint_cbk(cbk)
 
-    def release_right_plan_joint_cbk(self, key: str) -> None:
-        self._right.release_plan_joint_cbk(key)
+    def release_right_plan_joint_cbk(self) -> None:
+        self._right.release_plan_joint_cbk()
 
-    def register_right_plan_pose_cbk(self, key: str, cbk: Callable) -> None:
-        self._right.register_plan_pose_cbk(key, cbk)
+    def register_right_plan_pose_cbk(self, cbk: Callable) -> None:
+        self._right.register_plan_pose_cbk(cbk)
 
-    def release_right_plan_pose_cbk(self, key: str) -> None:
-        self._right.release_plan_pose_cbk(key)
+    def release_right_plan_pose_cbk(self) -> None:
+        self._right.release_plan_pose_cbk()
 
-    def register_right_external_force_cbk(self, key: str, cbk: Callable) -> None:
-        self._right.register_external_force_cbk(key, cbk)
+    def register_right_external_force_cbk(self, cbk: Callable) -> None:
+        self._right.register_external_force_cbk(cbk)
 
-    def release_right_external_force_cbk(self, key: str) -> None:
-        self._right.release_external_force_cbk(key)
+    def release_right_external_force_cbk(self) -> None:
+        self._right.release_external_force_cbk()
 
     # ------------------------------------------------------------------ #
     #  右臂末端执行器（通用 eeff）
@@ -1066,6 +1231,15 @@ class CArmDualBot:
     def get_right_eeff_tau(self) -> list:
         return self._right.get_eeff_tau()
 
+    def get_right_eeff_motor_pos(self) -> list:
+        return self._right.get_eeff_motor_pos()
+
+    def get_right_eeff_motor_vel(self) -> list:
+        return self._right.get_eeff_motor_vel()
+
+    def get_right_eeff_motor_tau(self) -> list:
+        return self._right.get_eeff_motor_tau()
+
     def get_right_plan_eeff_pos(self) -> list:
         return self._right.get_plan_eeff_pos()
 
@@ -1074,6 +1248,15 @@ class CArmDualBot:
 
     def get_right_plan_eeff_tau(self) -> list:
         return self._right.get_plan_eeff_tau()
+
+    def get_right_plan_eeff_motor_pos(self) -> list:
+        return self._right.get_plan_eeff_motor_pos()
+
+    def get_right_plan_eeff_motor_vel(self) -> list:
+        return self._right.get_plan_eeff_motor_vel()
+
+    def get_right_plan_eeff_motor_tau(self) -> list:
+        return self._right.get_plan_eeff_motor_tau()
 
     def get_right_eeff_type(self) -> str:
         return self._right.get_eeff_type()
@@ -1084,8 +1267,9 @@ class CArmDualBot:
     def get_right_eeff_connect(self) -> bool:
         return self._right.get_eeff_connect()
 
-    def set_right_eeff(self, pos: list, vel: list, tau: list) -> int:
-        return self._right.set_eeff(pos, vel, tau)
+    def set_right_eeff(self, pos: list, vel: list, tau: list,
+                       control_motor: bool = False) -> int:
+        return self._right.set_eeff(pos, vel, tau, control_motor)
 
     # ------------------------------------------------------------------ #
     #  deprecated: 右臂旧夹爪/灵巧手接口
@@ -1135,6 +1319,24 @@ class CArmDualBot:
     def track_right_pose(self, targets: list, eeff_pos: float = -1) -> int:
         return self._right.track_pose(targets, eeff_pos)
 
+    def track_joint(self, left_targets: list, right_targets: list,
+                    left_eeff_pos: float = -1,
+                    right_eeff_pos: float = -1) -> int:
+        """跟随运动，周期性发送目标关节位置，双臂同时运动（对齐 C++ CArmDualBot::track_joint）。"""
+        ret = self.track_left_joint(left_targets, left_eeff_pos)
+        if ret < 0:
+            return ret
+        return self.track_right_joint(right_targets, right_eeff_pos)
+
+    def track_pose(self, left_targets: list, right_targets: list,
+                   left_eeff_pos: float = -1,
+                   right_eeff_pos: float = -1) -> int:
+        """跟随运动，周期性发送目标位姿，法兰相对基座，双臂同时运动（对齐 C++ CArmDualBot::track_pose）。"""
+        ret = self.track_left_pose(left_targets, left_eeff_pos)
+        if ret < 0:
+            return ret
+        return self.track_right_pose(right_targets, right_eeff_pos)
+
     def move_right_joint(self, target_pos: list, desire_time: float = -1,
                          is_sync: bool = True) -> int:
         return self._right.move_joint(target_pos, desire_time, is_sync)
@@ -1177,8 +1379,14 @@ class CArmDualBot:
     def get_right_tool_coordinate(self, index: int) -> list:
         return self._right.get_tool_coordinate(index)
 
-    def trajectory_teach_right(self, off_on: bool, name: str = "") -> int:
+    def trajectory_teach_right(self, off_on: bool, name: str) -> int:
         return self._right.trajectory_teach(off_on, name)
+
+    def trajectory_teach(self, off_on: bool, name: str) -> int:
+        """使用同一轨迹名同步开始或停止左右臂示教。"""
+        rl = self._left.trajectory_teach(off_on, name)
+        rr = self._right.trajectory_teach(off_on, name)
+        return 1 if rl == 1 and rr == 1 else -1
 
     def trajectory_recorder_right(self, name: str, is_sync: bool = True) -> int:
         return self._right.trajectory_recorder(name, is_sync)
@@ -1259,3 +1467,235 @@ class CArmDualBot:
     def low_right_get_nullspace(self, joint_pos: list, tolerance: float,
                                 tool: list, mat: dict) -> int:
         return self._right.low_get_nullspace(joint_pos, tolerance, tool, mat)
+
+
+# ====================================================================== #
+#  CArmBust — 上半身包装（左臂、右臂、两自由度腰部）
+# ====================================================================== #
+class CArmBust(CArmDualBot):
+    """上半身控制器。
+
+    组合左右七自由度手臂和两自由度腰部。左右臂接口继承自
+    :class:`CArmDualBot`；腰部仅提供关节空间运动、关节状态、示教与底层
+    关节控制接口，不提供工具、末端执行器、透传或任务空间接口。
+    """
+
+    def __init__(self, server_ip: str = "10.42.0.101", port: int = 8090,
+                 timeout: float = 1, left_index: int = 0, right_index: int = 1,
+                 waist_index: int = 2, _validate_arm: bool = True):
+        super().__init__(server_ip, port, timeout, left_index, right_index,
+                         _validate_arm=False)
+        time.sleep(0.1)
+        self._waist = CArmSingleCol(server_ip, port, timeout, arm_index=waist_index,
+                                    _validate_arm=False)
+        self._validate_arm = _validate_arm
+        time.sleep(0.1)
+        if self._validate_arm and self.is_connected() and not self._is_specified_arm():
+            self.disconnect()
+            raise RuntimeError("CArmBust is designed for D3 arms with a 2 dof waist")
+
+    def _is_specified_arm(self) -> bool:
+        before = time.monotonic()
+        status_l = self._left.get_status()
+        status_r = self._right.get_status()
+        status_w = self._waist.get_status()
+        while self.is_connected():
+            status_l = self._left.get_status()
+            status_r = self._right.get_status()
+            status_w = self._waist.get_status()
+            if status_l.get("arm_dof", 0) == 7 and "D3" in status_l.get("arm_name", "") \
+                    and status_r.get("arm_dof", 0) == 7 \
+                    and "D3" in status_r.get("arm_name", "") \
+                    and status_w.get("arm_dof", 0) == 2:
+                return True
+            if time.monotonic() - before > 0.04:
+                break
+            time.sleep(0.01)
+        return False
+
+    def connect(self, server_ip: str = "10.42.0.101", port: int = 8090,
+                timeout: float = 1) -> int:
+        left_ret = self._left.connect(server_ip, port, timeout)
+        time.sleep(0.1)
+        right_ret = self._right.connect(server_ip, port, timeout)
+        time.sleep(0.1)
+        waist_ret = self._waist.connect(server_ip, port, timeout)
+        if self._validate_arm and self.is_connected() and not self._is_specified_arm():
+            self.disconnect()
+            raise RuntimeError("CArmBust is designed for D3 arms with a 2 dof waist")
+        return 1 if left_ret == 1 and right_ret == 1 and waist_ret == 1 else -1
+
+    def disconnect(self) -> int:
+        dual_ret = super().disconnect()
+        waist_ret = self._waist.disconnect()
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def is_connected(self) -> bool:
+        return super().is_connected() and self._waist.is_connected()
+
+    def set_ready(self) -> int:
+        dual_ret = super().set_ready()
+        waist_ret = self._waist.set_ready()
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_servo_enable(self, enable: bool) -> int:
+        dual_ret = super().set_servo_enable(enable)
+        waist_ret = self._waist.set_servo_enable(enable)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_waist_servo_enable(self, enable: bool) -> int:
+        return self._waist.set_servo_enable(enable)
+
+    def set_control_mode(self, mode: int) -> int:
+        dual_ret = super().set_control_mode(mode)
+        waist_ret = self._waist.set_control_mode(mode)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_waist_control_mode(self, mode: int) -> int:
+        return self._waist.set_control_mode(mode)
+
+    def get_version(self) -> str:
+        return super().get_version() + self._waist.get_version()
+
+    def emergency_stop(self) -> int:
+        dual_ret = super().emergency_stop()
+        waist_ret = self._waist.emergency_stop()
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def task_stop(self) -> int:
+        dual_ret = super().task_stop()
+        waist_ret = self._waist.task_stop()
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_speed_level(self, level: float, response_level: int = 20) -> int:
+        dual_ret = super().set_speed_level(level, response_level)
+        waist_ret = self._waist.set_speed_level(level, response_level)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_collision_config(self, enable_flag: bool = True,
+                             sensitivity_level: int = 0) -> int:
+        dual_ret = super().set_collision_config(enable_flag, sensitivity_level)
+        waist_ret = self._waist.set_collision_config(enable_flag, sensitivity_level)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def set_waist_collision_config(self, enable_flag: bool = True,
+                                   sensitivity_level: int = 0) -> int:
+        return self._waist.set_collision_config(enable_flag, sensitivity_level)
+
+    def register_error_cbk(self, key: str, cbk: Callable) -> None:
+        super().register_error_cbk(key, cbk)
+        self._waist.register_error_cbk(key, cbk)
+
+    def release_error_cbk(self, key: str) -> None:
+        super().release_error_cbk(key)
+        self._waist.release_error_cbk(key)
+
+    def register_completion_cbk(self, key: str, cbk: Callable) -> None:
+        super().register_completion_cbk(key, cbk)
+        self._waist.register_completion_cbk(key, cbk)
+
+    def release_completion_cbk(self, key: str) -> None:
+        super().release_completion_cbk(key)
+        self._waist.release_completion_cbk(key)
+
+    def trajectory_teach(self, off_on: bool, name: str) -> int:
+        dual_ret = super().trajectory_teach(off_on, name)
+        waist_ret = self._waist.trajectory_teach(off_on, name)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def trajectory_teach_waist(self, off_on: bool, name: str) -> int:
+        return self._waist.trajectory_teach(off_on, name)
+
+    def trajectory_recorder_waist(self, name: str, is_sync: bool = True) -> int:
+        return self._waist.trajectory_recorder(name, is_sync)
+
+    def check_teach(self, left_traj_list: list, right_traj_list: list,
+                    waist_traj_list: list) -> int:
+        dual_ret = super().check_teach(left_traj_list, right_traj_list)
+        waist_ret = self._waist.check_teach(waist_traj_list)
+        return 1 if dual_ret == 1 and waist_ret == 1 else -1
+
+    def get_waist_config(self) -> dict:
+        return self._waist.get_config()
+
+    def get_waist_status(self) -> dict:
+        return self._waist.get_status()
+
+    def get_waist_joint_pos(self) -> list:
+        return self._waist.get_joint_pos()
+
+    def get_waist_joint_vel(self) -> list:
+        return self._waist.get_joint_vel()
+
+    def get_waist_joint_tau(self) -> list:
+        return self._waist.get_joint_tau()
+
+    def get_waist_plan_joint_pos(self) -> list:
+        return self._waist.get_plan_joint_pos()
+
+    def get_waist_plan_joint_vel(self) -> list:
+        return self._waist.get_plan_joint_vel()
+
+    def get_waist_plan_joint_tau(self) -> list:
+        return self._waist.get_plan_joint_tau()
+
+    def get_waist_joint_external_tau(self) -> list:
+        return self._waist.get_joint_external_tau()
+
+    def register_waist_joint_cbk(self, cbk: Callable) -> None:
+        self._waist.register_joint_cbk(cbk)
+
+    def release_waist_joint_cbk(self) -> None:
+        self._waist.release_joint_cbk()
+
+    def register_waist_plan_joint_cbk(self, cbk: Callable) -> None:
+        self._waist.register_plan_joint_cbk(cbk)
+
+    def release_waist_plan_joint_cbk(self) -> None:
+        self._waist.release_plan_joint_cbk()
+
+    def track_waist_joint(self, targets: list) -> int:
+        if len(targets) != 2:
+            return -1
+        return self._waist.track_joint(targets)
+
+    def move_waist_joint(self, target_pos: list, desire_time: float = -1,
+                         is_sync: bool = True) -> int:
+        if len(target_pos) != 2:
+            return -1
+        return self._waist.move_joint(target_pos, desire_time, is_sync)
+
+    def move_waist_joint_traj(self, target_pos: list, stamps: list = None,
+                              is_sync: bool = True) -> int:
+        if not target_pos or any(len(point) != 2 for point in target_pos):
+            return -1
+        return self._waist.move_joint_traj(target_pos, [], stamps, is_sync)
+
+    def low_waist_pv_command(self, pos: list, vel: list, data: dict) -> int:
+        return self._waist.low_pv_command(pos, vel, data)
+
+    def low_waist_mit_command(self, pos: list, vel: list, tau: list,
+                              kp: list, kd: list, data: dict) -> int:
+        return self._waist.low_mit_command(pos, vel, tau, kp, kd, data)
+
+    def low_waist_pf_command(self, pos: list, vel: list, tau: list,
+                             data: dict) -> int:
+        return self._waist.low_pf_command(pos, vel, tau, data)
+
+    def low_waist_current_command(self, tau: list, data: dict) -> int:
+        return self._waist.low_current_command(tau, data)
+
+    def low_waist_refresh(self, data: dict) -> int:
+        return self._waist.low_refresh(data)
+
+    def low_waist_set_robot_mode(self, mode: int) -> int:
+        return self._waist.low_set_robot_mode(mode)
+
+    def low_waist_set_servo_enable(self, status: bool) -> int:
+        return self._waist.low_set_servo_enable(status)
+
+    def low_waist_reset(self, cnt: int = 5) -> int:
+        return self._waist.low_reset(cnt)
+
+    def low_waist_get_servo_status(self, status: dict) -> int:
+        return self._waist.low_get_servo_status(status)

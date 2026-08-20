@@ -7,6 +7,7 @@ Python interface for cvte arm.
 - **`Carm`** — 底层 WebSocket 内核（`carm_kernel.py`），基于属性和简单回调的轻量级接口。
 - **`CArmSingleCol`** — 单臂包装类（`carm.py`），方法签名与返回值与 C++ `CArmSingleCol`（`carm_cobot.h`）完全对齐。
 - **`CArmDualBot`** — 双臂包装类（`carm.py`），组合两个 `CArmSingleCol`，方法签名与 C++ `CArmDualBot`（`carm_dual.h`）完全对齐。
+- **`CArmBust`** — 上半身包装类（`carm.py`），组合左右臂与两自由度腰部，对齐 C++ `CArmBust`（`carm_bust.h`）。
 
 # Install
 
@@ -58,6 +59,25 @@ print("右臂关节位置:", dual.get_right_joint_pos())
 dual.disconnect()
 ```
 
+## 快速开始 — CArmBust（左右臂加腰部）
+
+```python
+from carm import CArmBust
+
+bust = CArmBust("10.42.0.101")
+bust.set_ready()
+
+# 可单独控制每个单元
+bust.set_waist_servo_enable(True)
+bust.set_waist_control_mode(1)
+bust.move_waist_joint([0.0, 0.2])
+
+# 同步开始或停止左右臂、腰部的示教录制
+bust.trajectory_teach(True, "upper_body_demo")
+
+bust.disconnect()
+```
+
 # Version update to pypy
 
 ```
@@ -76,12 +96,19 @@ python3 -m twine upload --repository pypi dist/*
 | `Carm`          | `carm_kernel.py` | —               | 底层 WebSocket 内核，供上层接口调用                          |
 | `CArmSingleCol` | `carm.py`        | `carm_cobot.h` | 单臂包装类，方法签名与返回值约定与 C++ 完全对齐              |
 | `CArmDualBot`   | `carm.py`        | `carm_dual.h`  | 双臂包装类，组合两个 `CArmSingleCol`，共享方法同时操作两臂 |
+| `CArmBust`      | `carm.py`        | `carm_bust.h`  | 上半身包装类，组合左右臂与两自由度腰部 |
 
 ### 返回值约定
 
 - **命令类方法**返回 `int`：`1` 表示成功，`<1` 表示失败（与 C++ 一致）。
 - **查询类方法**返回对应数据类型（`list` / `float` / `dict` / `str` 等）。
 - **输出参数**通过传入可变容器（`list` / `dict`）就地填充，匹配 C++ 引用语义。
+- **状态回调**采用 C++ 的单回调语义：`register_joint_cbk(cbk)`、
+  `register_pose_cbk(cbk)`、`register_plan_joint_cbk(cbk)`、
+  `register_plan_pose_cbk(cbk)`、`register_external_force_cbk(cbk)`；对应
+  `release_*_cbk()` 不接收参数。再次注册会替换此前的回调。
+- **错误与完成回调**保留 `key` 参数，与 C++ 的
+  `register_error_cbk(key, cbk)`、`register_completion_cbk(key, cbk)` 一致。
 
 ### CArmDualBot 命名规则
 
@@ -96,9 +123,23 @@ python3 -m twine upload --repository pypi dist/*
 
 共享方法（如 `connect`、`set_ready`、`set_speed_level`、`register_error_cbk` 等）同时操作两个臂，全部成功才返回 1。
 
+### CArmBust 腰部接口
+
+`CArmBust` 继承全部双臂接口，并新增腰部接口：
+
+- 独立控制：`set_waist_servo_enable`、`set_waist_control_mode`、`set_waist_collision_config`
+- 关节状态：`get_waist_config`、`get_waist_status`、`get_waist_joint_pos/vel/tau`、`get_waist_plan_joint_pos/vel/tau`、`get_waist_joint_external_tau`
+- 关节运动：`track_waist_joint`、`move_waist_joint`、`move_waist_joint_traj`
+- 回调与示教：`register_waist_joint_cbk`、`register_waist_plan_joint_cbk`、`trajectory_teach_waist`、`trajectory_recorder_waist`；`trajectory_teach` 同步控制左臂、右臂和腰部
+- 底层关节控制：`low_waist_pv_command`、`low_waist_mit_command`、`low_waist_pf_command`、`low_waist_current_command`、`low_waist_refresh`、`low_waist_set_robot_mode`、`low_waist_set_servo_enable`、`low_waist_reset`、`low_waist_get_servo_status`
+
+腰部不提供工具号、末端执行器、夹爪/灵巧手、协议透传、笛卡尔位姿/外力、任务空间运动或运动学接口。
+`CArmBust.check_teach` 需要依次传入左臂、右臂和腰部三个轨迹列表；所有
+`trajectory_teach*` 接口均要求显式传入轨迹名称。
+
 ### 兼容性
 
-`from carm import Carm` 依然可用（兼容旧代码，不推荐），同时新增 `CArmSingleCol` 和 `CArmDualBot` 导出。
+`from carm import Carm` 依然可用（兼容旧代码，不推荐）；同时导出 `CArmSingleCol`、`CArmDualBot` 和 `CArmBust`。
 
 ## 安装
 
@@ -188,6 +229,10 @@ if robot.is_connected():
   - `eeff_upper` (list): 末端上限位
   - `eeff_vel` (list): 末端最大速度
   - `eeff_tau` (list): 末端最大力矩
+  - `motor_lower` (list): 末端电机下限位
+  - `motor_upper` (list): 末端电机上限位
+  - `motor_vel` (list): 末端电机最大速度
+  - `motor_tau` (list): 末端电机最大力矩
 
 ---
 
@@ -249,6 +294,8 @@ print("Joint positions:", robot.joint_pos)
 - `end_effector_dof`: 末端执行器自由度
 - `end_effector_pos` / `vel` / `tau`: 实际位置/速度/力矩（列表）
 - `plan_end_effector_pos` / `vel` / `tau`: 规划值
+- `end_effector_motor_pos` / `vel` / `tau`: 实际电机位置/速度/力矩（列表）
+- `plan_end_effector_motor_pos` / `vel` / `tau`: 规划电机位置/速度/力矩（列表）
 - `gripper_state`: 夹爪状态（简化，-1/0/1）
 - `gripper_pos` / `tau`: 夹爪位置和力矩（单值）
 - `plan_gripper_pos` / `tau`: 规划夹爪值
@@ -327,7 +374,59 @@ success, can_id, data = robot.set_passthrough_data(mode=1, can_id=0x01, data=[0x
 print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
 ```
 
-#### `set_end_effector(dof, pos, vel, tau)`
+#### `set_ecat_passthrough_data(mode, frame, timeout_ms=100)`
+
+- 描述：通过 EtherCAT 透传板发送或接收完整 CAN/CAN FD 帧。
+- 参数：
+  - `mode` (int): `0` 发送，`1` 接收，`2` 发送并等待响应。
+  - `frame` (dict): 帧数据。`can_id` 为 CAN ID，`flags` 为帧标志，
+    `can_fd` 区分 CAN/CAN FD，`data` 支持字节列表或十六进制字符串。
+  - `timeout_ms` (int): `mode=2` 的底层响应超时，范围 `1..5000ms`。
+- 返回：成功时传入的 `frame` 会被响应帧原地更新。返回码含义如下：
+  - `1`：成功。
+  - `-1`：SDK 通信失败，例如断连或同步请求超时。
+  - `-2`：后端拒绝请求或底层透传操作失败；后端错误信息会写入日志。
+  - `-3`：后端响应格式异常。
+  - `-4`：Python 参数无法序列化为 JSON 或字节数据。
+- 限制：CAN 数据最长 8 字节，CAN FD 数据最长 64 字节。`CArmDualBot` 使用
+  `set_left_ecat_passthrough_data` 和 `set_right_ecat_passthrough_data` 分别向
+  左右手对应的 EtherCAT CAN 通道下发数据。
+- 参数业务规则由后端统一校验，SDK 负责参数序列化、同步通信和响应完整性检查。
+
+帧标志：
+
+- `ECAT_CAN_FLAG_EXTENDED`：扩展帧。
+- `ECAT_CAN_FLAG_REMOTE`：远程帧，仅 CAN。
+- `ECAT_CAN_FLAG_BRS`：波特率切换，仅 CAN FD。
+- `ECAT_CAN_FLAG_ESI`：错误状态指示，仅 CAN FD。
+
+```python
+from carm import CArmSingleCol, ECAT_CAN_FLAG_BRS
+
+robot = CArmSingleCol("10.42.0.101")
+frame = {
+    "can_id": 0x123,
+    "flags": ECAT_CAN_FLAG_BRS,
+    "can_fd": True,
+    "data": [0x01, 0x02, 0x03, 0x04],
+}
+
+ret = robot.set_ecat_passthrough_data(2, frame, timeout_ms=500)
+if ret == 1:
+    print(frame)
+```
+
+人形双臂需要明确指定左手或右手：
+
+```python
+from carm import CArmDualBot
+
+robot = CArmDualBot("10.42.0.101")
+left_ret = robot.set_left_ecat_passthrough_data(0, frame.copy())
+right_ret = robot.set_right_ecat_passthrough_data(0, frame.copy())
+```
+
+#### `set_end_effector(dof, pos, vel, tau, control_motor=False)`
 
 - 描述：设置末端执行器（夹爪/灵巧手）的目标位置、速度、力矩。
 - 参数：
@@ -335,6 +434,8 @@ print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
   - `pos` (float/list): 位置值或列表。
   - `vel` (float/list): 速度值或列表。
   - `tau` (float/list): 力矩值或列表。
+  - `control_motor` (bool, optional): 默认为 `False`，按末端执行器坐标及
+    `eeff_*` 限制控制；设为 `True` 时直接控制电机及 `motor_*` 限制控制。
 - 说明：输入自动对齐到指定自由度，不足补零，超出截断。
 
 **python**
@@ -342,6 +443,8 @@ print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
 ```
 # 单自由度夹爪
 robot.set_end_effector(1, pos=0.02, vel=0.0, tau=5.0)
+# 需要直接控制电机时传入 control_motor=True，此时按 motor_* 限制钳位
+robot.set_end_effector(1, pos=-1.0, vel=0.0, tau=5.0, control_motor=True)
 ```
 
 #### `set_gripper(pos, tau=10)`
@@ -708,7 +811,8 @@ print("Cartesian pose:", pose)
 
 ##### `low_set_end_effector_ctr(pos, vel, tau)`
 
-- 描述：底层末端执行器控制指令。
+- 描述：底层末端执行器控制指令，固定直接控制电机发送，并使用 `motor_*`
+  限制钳位位置、速度和力矩。
 
 #### 底层配置指令
 
