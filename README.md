@@ -365,16 +365,18 @@ robot.set_control_mode(3)  # 进入拖动模式
   `set_right_ecat_passthrough_data`（见下文 `set_ecat_passthrough_data`）。
 - 参数：
   - `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
-  - `can_id` (int): CAN ID。
+  - `can_id` (int): CAN ID（输入/输出；响应ID回写方式待实现）。
   - `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
-- 返回：当模式为 1 或 2 且执行成功时，返回 `(True, can_id, bytes_data)` 三元组；其它情况返回 `(False, None, None)`。
+- 返回：`CArmSingleCol` 返回 `1/-1`，并在接收成功时原地更新 `data`；底层
+  `Carm` 返回 `(success, can_id, bytes_data)` 三元组。
 
 **python**
 
 ```python
-# 发送透传数据，data 可为列表或十六进制字符串
-success, can_id, data = robot.set_passthrough_data(mode=1, can_id=0x01, data=[0x0A, 0x0B])
-print(success, can_id, data)  # 成功示例输出: True 1 b'\x0a\x0b'
+can_id = 0x01
+data = [0x0A, 0x0B]
+ret = robot.set_passthrough_data(mode=1, can_id=can_id, data=data)
+print(ret, can_id, data)
 ```
 
 #### `set_ecat_passthrough_data(mode, frame, timeout_ms=100)`
@@ -776,102 +778,160 @@ print("Cartesian pose:", pose)
 
 ### 底层透传接口（Low-Level）
 
-底层透传接口提供伺服级的高速控制能力，适用于需要 1ms 级控制周期的场景。使用前需调用 `set_low_mode(True)` 进入底层模式。
+底层透传接口提供伺服级高速控制能力。以下签名以公开包装类 `CArmSingleCol`
+为准：函数返回 `1` 表示成功，返回 `-1` 表示失败；标为“输出”的 `list` 或
+`dict` 由函数就地写入。`CArmDualBot` 使用对应的 `low_left_*` / `low_right_*`
+接口，`CArmBust` 的腰部使用 `low_waist_*` 接口，参数方向和单位相同。
+
+使用前需调用 `set_low_mode(True)` 进入底层模式。双臂及上半身类的
+`set_low_mode` 保持单路下发。
 
 #### `set_low_mode(flag=True)`
 
 - 描述：设置底层透传模式。
 - 参数：
   - `flag` (bool): True 开启，False 关闭。
-- 返回：`bool`
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 #### 底层控制指令
 
-以下指令均返回 `(success: bool, low_state: dict)` 元组。执行后可通过 `@property` 获取最新底层状态。
+以下控制指令均通过输出参数 `data` 写入本次返回的底层硬件状态。
 
-##### `low_pv_command(pos, vel)`
+##### `low_pv_command(pos, vel, data)`
 
 - 描述：发送底层位置速度(PV)控制指令。
-- 参数：`pos` (list) 目标关节位置 (rad)，`vel` (list) 目标关节速度 (rad/s)。
+- 输入：`pos` 为目标关节位置，单位 rad 或 m；`vel` 为目标关节速度，单位
+  rad/s 或 m/s。两个数组长度均为 dof。
+- 输出：`data` (dict)，本次返回的底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_mit_command(pos, vel, tau, kp, kd)`
+##### `low_mit_command(pos, vel, tau, kp, kd, data)`
 
 - 描述：发送底层 MIT 综合控制指令。
-- 参数：`pos`/`vel`/`tau`/`kp`/`kd` 均为 list，分别对应关节位置、速度、前馈力矩、刚度、阻尼。
+- 输入：`pos`、`vel`、`tau`、`kp`、`kd` 均为长度=dof的列表，单位分别为
+  rad或m、rad/s或m/s、N·m或N、N·m/rad或N/m、N·m·s/rad或N·s/m。
+- 输出：`data` (dict)，本次返回的底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_pf_command(pos, vel, tau)`
+##### `low_pf_command(pos, vel, tau, data)`
 
 - 描述：发送底层位置力矩(PF)混合控制指令。
+- 输入：`pos`、`vel`、`tau` 的单位分别为 rad或m、rad/s或m/s、N·m或N，长度=dof。
+- 输出：`data` (dict)，本次返回的底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_current_command(tau)`
+##### `low_current_command(tau, data)`
 
 - 描述：发送底层力矩(Current)指令。
-- 参数：`tau` (list) 目标关节力矩 (N·m)。
+- 输入：`tau` 为目标关节力矩/力，单位 N·m 或 N，长度=dof。
+- 输出：`data` (dict)，本次返回的底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_refresh()`
+##### `low_refresh(data)`
 
 - 描述：主动刷新并获取底层硬件数据（无需下发控制指令）。
+- 输出：`data` (dict)，最新底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_set_end_effector_ctr(pos, vel, tau)`
+##### `low_set_end_effector_ctr(pos, vel, tau, data)`
 
 - 描述：底层末端执行器控制指令，固定直接控制电机发送，并使用 `motor_*`
   限制钳位位置、速度和力矩。
+- 输入：`pos`、`vel`、`tau` 分别为电机目标位置、速度和力矩/力，单位为
+  rad或m、rad/s或m/s、N·m或N。
+- 输出：`data` (dict)，本次返回的底层硬件状态。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 #### 底层配置指令
+
+##### `low_set_safety_params(updates, current)`
+
+- 描述：使用一个字典设置底层安全参数，仅允许在 Low Mode 下调用。字典支持部分更新且至少包含一项。
+- 输入：`updates` (dict)，支持 `low_watchdog_timeout`（ms）、
+  `low_pos_gap_limit`（rad或m）、`low_vel_gap_limit`（rad/s或m/s）、
+  `low_tau_limit`（N·m或N），只需传入本次需要更新的字段。
+- 输出：`current` (dict)，成功时包含四项完整的当前安全参数。
+- 校验：watchdog 必须为有限正数；三个数组长度必须等于目标臂 dof，元素必须为有限非负数。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 ##### `low_set_robot_mode(mode)`
 
 - 描述：设置机器人底层运行模式。
+- 输入：`mode` 为模式枚举值：0-IDLE、1-PV、2-MIT、3-CURRENT、4-PF，无单位。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 ##### `low_set_end_effector_mode(mode)`
 
 - 描述：设置末端执行器底层运行模式。
+- 输入：`mode` 为末端执行器定义的模式枚举值，无单位。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 ##### `low_set_servo_enable(status)`
 
 - 描述：控制底层伺服上/下使能。
-- 参数：`status` (bool) True 上使能，False 下使能。
+- 输入：`status` (bool)，True 上使能，False 下使能，无单位。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 ##### `low_reset(cnt=5)`
 
 - 描述：进行底层错误复位操作。
-- 参数：`cnt` (int) 尝试复位的最大次数。
+- 输入：`cnt` (int)，最大尝试次数，单位次。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 #### 底层状态查询
 
-##### `low_get_servo_status()`
+##### `low_get_servo_status(status)`
 
 - 描述：主动获取底层伺服级状态。
-- 返回：`dict`，包含 `mitKp`/`mitKd`/`pvVel`/`pfVel`/`isServoEnable`/`fsmMode`/`isConnected`/`mosTemperature`/`motorTemperature`/`motorVBus`/`motorErrorCode`/`motorErrorMsg` 等字段。
+- 输出：`status` (dict)，包含控制参数、连接/使能状态、温度（°C）、母线电压（V）、
+  模式和错误信息等字段。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_inverse_kine(pose, refer_pos, tool=-1)`
+##### `low_get_inverse_kine(pose, refer_pos, jnt_value, tool=-1)`
 
 - 描述：执行底层逆运动学闭式求解。
-- 返回：`(success, tool, joint_pos)` 元组。
+- 输入：`pose=[x,y,z,qx,qy,qz,qw]`，位置单位m、四元数无单位；`refer_pos`
+  为参考关节位置，单位rad或m；`tool` 为工具编号，-1表示当前工具。
+- 输出：`jnt_value` (list)，求解得到的关节位置，单位rad或m。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_forward_kine(joint_pos, tool=-1)`
+##### `low_get_forward_kine(joint_pos, quat_pose, tool=-1)`
 
 - 描述：执行底层正运动学计算。
-- 返回：`(success, tool, pose)` 元组。
+- 输入：`joint_pos` 为关节位置，单位rad或m；`tool` 为工具编号，-1表示当前工具。
+- 输出：`quat_pose=[x,y,z,qx,qy,qz,qw]`，位置单位m、四元数无单位。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_dynamics(joint_pos, joint_vel, joint_acc)`
+##### `low_get_dynamics(joint_pos, joint_vel, joint_acc, tool, m_force, c_force, g_force)`
 
 - 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)分量。
-- 返回：`(success, tool, m_force, c_force, g_force)` 元组。
+- 输入：`joint_pos`、`joint_vel`、`joint_acc` 单位依次为rad或m、rad/s或m/s、
+  rad/s²或m/s²。
+- 输出：`tool` 为单元素工具编号列表；`m_force`、`c_force`、`g_force` 为惯性、
+  科里奥利/离心及重力项，单位N·m或N。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_jacobian(joint_pos)`
+##### `low_get_jacobian(joint_pos, tool, mat)`
 
 - 描述：获取底层雅可比矩阵。
-- 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表 `list[list[float]]`，形状 `(rows, cols)`。
+- 输入：`joint_pos` 为关节位置，单位rad或m。
+- 输出：`tool` 为单元素工具编号列表；`mat` 直接写入二维矩阵
+  `list[list[float]]`，行数为 `len(mat)`，列数为 `len(mat[0])`。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_nullspace(joint_pos, tolerance)`
+##### `low_get_nullspace(joint_pos, tolerance, tool, mat)`
 
 - 描述：获取底层零空间矩阵。
-- 返回：`(success, tool, matrix)` 元组，`matrix` 为二维列表。
+- 输入：`joint_pos` 为关节位置，单位rad或m；`tolerance` 为奇异值判定公差，无单位。
+- 输出：`tool` 为单元素工具编号列表；`mat` 直接写入无单位二维矩阵
+  `list[list[float]]`，行数为 `len(mat)`，列数为 `len(mat[0])`。
+- 返回：`int`，1 表示成功，-1 表示失败。
 
 #### 底层状态属性（@property）
 
-执行底层控制指令后，可通过以下属性直接读取最新底层状态：
+以下属性属于底层 `Carm` 类。调用 `Carm.low_refresh()` 或执行底层控制指令刷新状态后，
+可通过这些属性直接读取最新底层状态；公开包装类 `CArmSingleCol.low_refresh(data)` 则通过
+输出参数 `data` 返回同一帧数据。
 
 **臂状态（来自 RobotStatus）：**
 
@@ -893,17 +953,19 @@ print("Cartesian pose:", pose)
 **python**
 
 ```python
+from carm import Carm
+
+robot = Carm("10.42.0.101")
 robot.set_low_mode(True)
-robot.low_set_servo_enable(True)
-robot.low_set_robot_mode(1)
 
-# PV 控制循环
-ok, state = robot.low_pv_command(target_pos, target_vel)
-print("实际关节位置:", robot.low_joint_pos)
-print("实际关节力矩:", robot.low_joint_tau)
-print("臂连接状态:", robot.low_arm_connected)
+ok, _ = robot.low_refresh()
+if ok:
+    print("实际关节位置:", robot.low_joint_pos)
+    print("实际关节速度:", robot.low_joint_vel)
+    print("实际关节力矩:", robot.low_joint_tau)
+    print("机械臂连接状态:", robot.low_arm_connected)
+    print("机械臂使能状态:", robot.low_arm_enable)
 
-robot.low_set_servo_enable(False)
 robot.set_low_mode(False)
 ```
 

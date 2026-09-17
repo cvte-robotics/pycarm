@@ -687,8 +687,8 @@ class Carm:
 
         :param data: list/str, 透传数据（字节列表或十六进制字符串等，需底层支持）
 
-        :return: tuple, 当模式为 1 或 2，并且执行成功时，直接返回两参数元组：(can_id, response_data_bytes)。
-                 其它情况返回 bool 表示执行是否成功。
+        :return: tuple, ``(success, can_id, response_data_bytes)``。无响应数据或失败时，
+                 后两项为 ``None``。
         """
         if isinstance(data, list):
             import binascii
@@ -1767,11 +1767,11 @@ class Carm:
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def check_teach(self) -> list:
+    def check_teach(self):
         """
         获取已录制的轨迹列表，只有正则匹配上的 '20250918175001.self_name.json' 才会被返回
 
-        :return: list, 轨迹列表的字符串数组
+        :return: list/None, 成功时返回轨迹列表（可以为空），通信失败时返回 None
         """
         res = self.request({
             "command": "teachRecorder",
@@ -1779,9 +1779,9 @@ class Carm:
             "task_id": 3,
             "name": "no_regular_expression"
         })
-        if res.get("recv") == "Task_Recieve" and res.get("teach_list"):
-            return res["teach_list"]
-        return []
+        if res.get("recv") != "Task_Recieve":
+            return None
+        return res.get("teach_list", [])
 
     # def set_traj_recorder(self, traj_record_flag) -> bool:
     #     """
@@ -2512,6 +2512,56 @@ class Carm:
         """
         res = self.request({"command": "setLowMode", "arm_index": self.arm_index, "flag": flag})
         return res.get("recv") == "Task_Recieve"
+
+    def low_set_safety_params(self, updates) -> tuple:
+        """使用一个字典设置 Low Mode 安全参数，字典支持部分更新。
+
+        :param updates: 待更新参数字典，至少包含以下一个字段：
+            ``low_watchdog_timeout``（ms，有限正数）、
+            ``low_pos_gap_limit``（rad或m，长度=dof）、
+            ``low_vel_gap_limit``（rad/s或m/s，长度=dof）、
+            ``low_tau_limit``（N·m或N，长度=dof）。三个数组的元素必须为有限正数。
+            未知字段忽略，未提供的支持字段不加入下发协议。
+        :return: ``(success, params)``。成功时params包含服务端响应中的四项完整安全参数，
+            失败时返回 ``(False, {})``。
+        """
+        if not isinstance(updates, dict):
+            print("Error: Low Mode 安全参数必须使用字典传入")
+            return False, {}
+
+        request = {"command": "setSafetyParams", "arm_index": self.arm_index}
+        if "low_watchdog_timeout" in updates:
+            value = updates["low_watchdog_timeout"]
+            if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                    not math.isfinite(value) or value <= 0):
+                print("Error: low_watchdog_timeout 必须为有限的正数")
+                return False, {}
+            request["low_watchdog_timeout"] = float(value)
+
+        for name in ("low_pos_gap_limit", "low_vel_gap_limit", "low_tau_limit"):
+            if name not in updates:
+                continue
+            values = updates[name]
+            if (not isinstance(values, (list, tuple)) or
+                    len(values) != self.arm_dof or
+                    any(isinstance(value, bool) or
+                        not isinstance(value, (int, float)) or
+                        not math.isfinite(value) or value <= 0
+                        for value in values)):
+                print(f"Error: {name} 长度必须等于 dof，且元素必须为有限的正数")
+                return False, {}
+            request[name] = list(values)
+
+        response = self.request(request)
+        if response.get("recv") != "Task_Recieve":
+            return False, {}
+        params = {
+            "low_watchdog_timeout": response.get("low_watchdog_timeout"),
+            "low_pos_gap_limit": response.get("low_pos_gap_limit", []),
+            "low_vel_gap_limit": response.get("low_vel_gap_limit", []),
+            "low_tau_limit": response.get("low_tau_limit", []),
+        }
+        return True, params
 
     def low_pv_command(self, pos, vel) -> tuple:
         """
