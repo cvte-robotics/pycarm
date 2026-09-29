@@ -10,6 +10,7 @@ _LOGGER = logging.getLogger(__name__)
 
 ECAT_CAN_FLAG_EXTENDED = 1 << 0
 ECAT_CAN_FLAG_REMOTE = 1 << 1
+ECAT_CAN_FLAG_FD = 1 << 2
 ECAT_CAN_FLAG_BRS = 1 << 3
 ECAT_CAN_FLAG_ESI = 1 << 4
 
@@ -310,6 +311,16 @@ class Carm:
     def cart_external_force(self):
         """笛卡尔外力 (fx, fy, fz, tx, ty, tz)"""
         return self._arm_state.get("cart_external_force", [])
+
+    @property
+    def mos_temperature(self):
+        """各关节MOS管温度（℃）"""
+        return self._arm_state.get("temp", {}).get("mos", [])
+
+    @property
+    def motor_temperature(self):
+        """各关节电机温度（℃）"""
+        return self._arm_state.get("temp", {}).get("motor", [])
 
     # -------------------- 末端执行器（夹爪）属性 --------------------
     @property
@@ -738,7 +749,7 @@ class Carm:
                     return -4, None
 
         request_data = {
-            "command": "setEcatPassthroughData",
+            "command": "setEcatCanPassthroughData",
             "arm_index": self.arm_index,
             "mode": mode,
             "data": request_frame,
@@ -813,6 +824,63 @@ class Carm:
             "can_fd": response_can_fd,
             "data": list(payload),
         }
+
+    def set_ecat_raw_passthrough_data(self, mode, data=None, timeout_ms=100) -> tuple:
+        """通过 EtherCAT 透传板同步发送或接收原始字节数据。
+
+        返回 ``(code, response_data_bytes)``。code 含义：1 成功；-1 SDK 通信失败；
+        -2 后端拒绝或执行失败；-3 后端响应格式异常；-4 Python 参数序列化失败。
+        前端不做参数校验，参数正确性由后端校验，响应由客户自行校验。
+        """
+        request_data = {
+            "command": "setEcatRawPassthroughData",
+            "arm_index": self.arm_index,
+            "mode": mode,
+        }
+        if mode in (0, 2):
+            try:
+                request_data["data"] = data if isinstance(data, str) else bytes(data or []).hex()
+            except (TypeError, ValueError):
+                _LOGGER.error("set_ecat_raw_passthrough_data: data 无法转换为字节数据")
+                return -4, None
+        if mode == 2:
+            request_data["timeout_ms"] = timeout_ms
+
+        try:
+            json.dumps(request_data)
+        except (TypeError, ValueError):
+            _LOGGER.error("set_ecat_raw_passthrough_data: 请求参数无法序列化为 JSON")
+            return -4, None
+
+        request_timeout = 6.0 if mode == 2 else 1.0
+        res = self.request(request_data, timeout=request_timeout)
+        recv = res.get("recv")
+        if recv != "Task_Recieve":
+            error_msg = res.get("error_msg") or res.get("errMsg") or "后端拒绝请求"
+            _LOGGER.error("set_ecat_raw_passthrough_data: %s", error_msg)
+            if "errMsg" in res and "error_msg" not in res:
+                return -1, None
+            return -2, None
+        if type(res.get("ret")) is not bool:
+            _LOGGER.error("set_ecat_raw_passthrough_data: 后端响应缺少有效的 ret 字段")
+            return -3, None
+        if not res["ret"]:
+            error_msg = res.get("error_msg") or "后端透传操作失败"
+            _LOGGER.error("set_ecat_raw_passthrough_data: %s", error_msg)
+            return -2, None
+
+        response_data = res.get("data")
+        if not isinstance(response_data, str):
+            _LOGGER.error("set_ecat_raw_passthrough_data: 后端响应缺少有效的 data 字段")
+            return -3, None
+        try:
+            if len(response_data) % 2 != 0:
+                raise ValueError("十六进制字符串长度必须为偶数")
+            payload = bytes.fromhex(response_data)
+        except ValueError:
+            _LOGGER.error("set_ecat_raw_passthrough_data: 后端返回的 data 不是有效十六进制数据")
+            return -3, None
+        return 1, payload
 
     def set_end_effector(self, dof, pos, vel, tau, control_motor=False) -> bool:
         """
@@ -1100,6 +1168,23 @@ class Carm:
                 "torque_factor": list(torque_factor),
                 "fric_compensation_factor": list(friction_compensation_factor)
             }
+        })
+        return res.get("recv") == "Task_Recieve"
+
+    def set_arm_angle(self, arm_angle) -> bool:
+        """
+        设置目标臂型角角度（仅拟人臂 7 自由度运动学支持）
+
+        :param arm_angle: float, 目标臂型角，单位弧度（rad），内部归一化到 [-π, π]
+
+        :return: bool, 执行是否成功
+        """
+        if not self.__check_input_valid(arm_angle):
+            return False
+        res = self.request({
+            "command": "setArmAngle",
+            "arm_index": self.arm_index,
+            "arm_angle": arm_angle
         })
         return res.get("recv") == "Task_Recieve"
 
@@ -2830,10 +2915,9 @@ class Carm:
         res = self.request({"command": "getJacobian", "arm_index": self.arm_index,
                            "joint_pos": list(joint_pos)})
         if res.get("recv") == "Task_Recieve":
-            rows = res.get("rows", 0)
-            cols = res.get("cols", 0)
-            flat = res.get("jacobian", [])
-            matrix = [flat[i * cols:(i + 1) * cols] for i in range(rows)] if rows and cols else []
+            matrix = res.get("jacobian", [])
+            if not isinstance(matrix, list) or any(not isinstance(row, list) for row in matrix):
+                return False, 0, []
             return True, res.get("tool", 0), matrix
         return False, 0, []
 
@@ -2851,10 +2935,9 @@ class Carm:
         res = self.request({"command": "getNullspace", "arm_index": self.arm_index,
                            "joint_pos": list(joint_pos), "tolerance": tolerance})
         if res.get("recv") == "Task_Recieve":
-            rows = res.get("rows", 0)
-            cols = res.get("cols", 0)
-            flat = res.get("nullspace", [])
-            matrix = [flat[i * cols:(i + 1) * cols] for i in range(rows)] if rows and cols else []
+            matrix = res.get("nullspace", [])
+            if not isinstance(matrix, list) or any(not isinstance(row, list) for row in matrix):
+                return False, 0, []
             return True, res.get("tool", 0), matrix
         return False, 0, []
 

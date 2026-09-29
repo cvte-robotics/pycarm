@@ -10,7 +10,7 @@ CArmSingleCol / CArmDualBot — 对齐 C++ SDK 接口的 Python 包装类。
 """
 
 import time
-from typing import Callable
+from typing import Callable, Optional
 from .carm_kernel import Carm
 
 def _to_int(success: bool) -> int:
@@ -218,6 +218,14 @@ class CArmSingleCol:
         return _to_int(self._impl.set_drag_params(torque_factor,
                                                    friction_compensation_factor))
 
+    def set_arm_angle(self, arm_angle: float) -> int:
+        """设置目标臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param arm_angle: [输入] 目标臂型角，单位弧度（rad），内部归一化到 [-π, π]。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return _to_int(self._impl.set_arm_angle(arm_angle))
+
     def set_collision_config(self, enable_flag: bool = True,
                              sensitivity_level: int = 0) -> int:
         """设置机械臂碰撞检测配置。
@@ -354,6 +362,20 @@ class CArmSingleCol:
         :return: list，[Fx,Fy,Fz,Tx,Ty,Tz]；单位N和N·m。
         """
         return self._impl.cart_external_force
+
+    def get_mos_temperature(self) -> list:
+        """获取各关节MOS管温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._impl.mos_temperature
+
+    def get_motor_temperature(self) -> list:
+        """获取各关节电机温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._impl.motor_temperature
 
     # ------------------------------------------------------------------ #
     #  末端执行器（通用 eeff）
@@ -898,12 +920,13 @@ class CArmSingleCol:
         """注册错误回调。
 
         :param key: [输入] 回调唯一标识。
-        :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
+        :param cbk: [输入] 回调函数，签名为 cbk(error_code, error_message)。
         :return: 无返回值。
         """
         self._register_keyed_cbk(key, cbk, "_error_cbks",
                                  lambda c: self._impl.on_error(
-                                     lambda code, msg: self._dispatch_error(c, code, msg)))
+                                     lambda info: self._dispatch_error(
+                                         c, info.get("error", 0), info.get("errMsg", ""))))
 
     def release_error_cbk(self, key: str) -> None:
         """注销错误回调。
@@ -1455,6 +1478,38 @@ class CArmDualBot:
         """
         return self._right.set_ecat_passthrough_data(mode, frame, timeout_ms)
 
+    def set_left_ecat_raw_passthrough_data(self, mode: int, data: Optional[list] = None,
+                                           timeout_ms: int = 100) -> int:
+        """通过左臂EtherCAT总线同步透传原始字节数据。
+
+        :param mode: [输入] 透传模式枚举值。
+        :param data: [输入/输出] 原始字节列表；单位byte，成功时写入响应数据。
+        :param timeout_ms: [输入] 响应超时时间；单位ms。
+        :return: int，1表示成功，负值表示失败。
+        """
+        code, response_data = self._left._impl.set_ecat_raw_passthrough_data(
+            mode, data, timeout_ms)
+        if code == 1 and isinstance(data, list):
+            data.clear()
+            data.extend(response_data)
+        return code
+
+    def set_right_ecat_raw_passthrough_data(self, mode: int, data: Optional[list] = None,
+                                            timeout_ms: int = 100) -> int:
+        """通过右臂EtherCAT总线同步透传原始字节数据。
+
+        :param mode: [输入] 透传模式枚举值。
+        :param data: [输入/输出] 原始字节列表；单位byte，成功时写入响应数据。
+        :param timeout_ms: [输入] 响应超时时间；单位ms。
+        :return: int，1表示成功，负值表示失败。
+        """
+        code, response_data = self._right._impl.set_ecat_raw_passthrough_data(
+            mode, data, timeout_ms)
+        if code == 1 and isinstance(data, list):
+            data.clear()
+            data.extend(response_data)
+        return code
+
     def get_version(self) -> str:
         """获取SDK与控制器版本信息。
 
@@ -1498,6 +1553,22 @@ class CArmDualBot:
         rl = self._left.set_speed_level(level, response_level)
         rr = self._right.set_speed_level(level, response_level)
         return 1 if rl == 1 and rr == 1 else -1
+
+    def set_left_arm_angle(self, arm_angle: float) -> int:
+        """设置左臂目标臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param arm_angle: [输入] 目标臂型角，单位弧度（rad），内部归一化到 [-π, π]。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._left.set_arm_angle(arm_angle)
+
+    def set_right_arm_angle(self, arm_angle: float) -> int:
+        """设置右臂目标臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param arm_angle: [输入] 目标臂型角，单位弧度（rad），内部归一化到 [-π, π]。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._right.set_arm_angle(arm_angle)
 
     def set_collision_config(self, enable_flag: bool = True,
                              sensitivity_level: int = 0) -> int:
@@ -1681,6 +1752,20 @@ class CArmDualBot:
         :return: list，[Fx,Fy,Fz,Tx,Ty,Tz]；单位N和N·m。
         """
         return self._left.get_cart_external_force()
+
+    def get_left_mos_temperature(self) -> list:
+        """获取左臂各关节MOS管温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._left.get_mos_temperature()
+
+    def get_left_motor_temperature(self) -> list:
+        """获取左臂各关节电机温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._left.get_motor_temperature()
 
     def register_left_joint_cbk(self, cbk: Callable) -> None:
         """注册左臂关节状态回调。
@@ -2397,6 +2482,20 @@ class CArmDualBot:
         :return: list，[Fx,Fy,Fz,Tx,Ty,Tz]；单位N和N·m。
         """
         return self._right.get_cart_external_force()
+
+    def get_right_mos_temperature(self) -> list:
+        """获取右臂各关节MOS管温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._right.get_mos_temperature()
+
+    def get_right_motor_temperature(self) -> list:
+        """获取右臂各关节电机温度。
+
+        :return: list，温度；单位℃。
+        """
+        return self._right.get_motor_temperature()
 
     def register_right_joint_cbk(self, cbk: Callable) -> None:
         """注册右臂关节状态回调。
@@ -3445,6 +3544,12 @@ class CArmBust(CArmDualBot):
             return -1
         return self._waist.track_joint(targets)
 
+    def track_waist_pose(self, targets: list) -> int:
+        """实时跟随腰部位姿目标；位姿格式为[x,y,z,qx,qy,qz,qw]。"""
+        if len(targets) != 7:
+            return -1
+        return self._waist.track_pose(targets)
+
     def move_waist_joint(self, target_pos: list, desire_time: float = -1,
                          is_sync: bool = True) -> int:
         """执行腰部关节运动。
@@ -3470,6 +3575,16 @@ class CArmBust(CArmDualBot):
         if not target_pos or any(len(point) != 2 for point in target_pos):
             return -1
         return self._waist.move_joint_traj(target_pos, [], stamps, is_sync)
+
+    def move_waist_flow_pose(self, target_pos: list,
+                             line_theta_weight: float = 0.5,
+                             accuracy: float = 0.0001,
+                             is_sync: bool = True) -> int:
+        """执行腰部基于雅可比迭代的位姿运动。"""
+        if len(target_pos) != 7:
+            return -1
+        return self._waist.move_flow_pose(target_pos, line_theta_weight,
+                                          accuracy, False, is_sync)
 
     def low_waist_pv_command(self, pos: list, vel: list, data: dict) -> int:
         """发送腰部PV指令；pos[输入]单位rad，vel[输入]单位rad/s，长度=腰部dof；
@@ -3535,3 +3650,8 @@ class CArmBust(CArmDualBot):
         返回1成功、-1失败。
         """
         return self._waist.low_get_servo_status(status)
+
+    def low_waist_get_jacobian(self, joint_pos: list, tool: list,
+                               mat: list) -> int:
+        """计算腰部雅可比矩阵。"""
+        return self._waist.low_get_jacobian(joint_pos, tool, mat)

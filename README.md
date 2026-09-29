@@ -402,6 +402,7 @@ print(ret, can_id, data)
 
 - `ECAT_CAN_FLAG_EXTENDED`：扩展帧。
 - `ECAT_CAN_FLAG_REMOTE`：远程帧，仅 CAN。
+- `ECAT_CAN_FLAG_FD`：CAN FD 类型提示（也可使用 `can_fd=True`）。
 - `ECAT_CAN_FLAG_BRS`：波特率切换，仅 CAN FD。
 - `ECAT_CAN_FLAG_ESI`：错误状态指示，仅 CAN FD。
 
@@ -429,6 +430,35 @@ from carm import CArmDualBot
 robot = CArmDualBot("10.42.0.101")
 left_ret = robot.set_left_ecat_passthrough_data(0, frame.copy())
 right_ret = robot.set_right_ecat_passthrough_data(0, frame.copy())
+```
+
+#### `set_ecat_raw_passthrough_data(mode, data=None, timeout_ms=100)`
+
+- 描述：通过 EtherCAT 透传板发送或接收原始字节数据。
+- 参数：
+  - `mode` (int): `0` 发送，`1` 接收，`2` 发送并等待响应。
+  - `data` (list/str): 原始字节列表或十六进制字符串；`mode=0/2` 必填。
+  - `timeout_ms` (int): `mode=2` 的底层响应超时，范围 `1..5000ms`。
+- 返回：成功时传入的 `data` 列表会被响应数据原地更新。返回码含义如下：
+  - `1`：成功。
+  - `-1`：SDK 通信失败，例如断连或同步请求超时。
+  - `-2`：后端拒绝请求或底层透传操作失败；后端错误信息会写入日志。
+  - `-3`：后端响应格式异常。
+  - `-4`：Python 参数无法序列化为 JSON 或字节数据。
+- 限制：仅 `CArmDualBot` / `CArmBust` 使用 `set_left_ecat_raw_passthrough_data` 和
+  `set_right_ecat_raw_passthrough_data` 分别向左右手对应的 EtherCAT 通道下发数据。
+- 参数业务规则由后端统一校验，SDK 负责参数序列化、同步通信和响应完整性检查，响应由客户自行校验。
+
+```python
+from carm import CArmDualBot
+
+robot = CArmDualBot("10.42.0.101")
+data = [0x01, 0x02, 0x03, 0x04]
+
+left_ret = robot.set_left_ecat_raw_passthrough_data(2, data, timeout_ms=500)
+if left_ret == 1:
+    print(data)  # data 已更新为响应字节
+right_ret = robot.set_right_ecat_raw_passthrough_data(2, data, timeout_ms=500)
 ```
 
 #### `set_end_effector(dof, pos, vel, tau, control_motor=False)`
