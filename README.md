@@ -234,6 +234,19 @@ if robot.is_connected():
   - `motor_vel` (list): 末端电机最大速度
   - `motor_tau` (list): 末端电机最大力矩
 
+#### `get_drag_param()`
+
+- 描述：获取各关节拖动转矩常数（拖动模式下的转矩缩放系数）。
+- 返回：`list[float]`，长度 = 自由度，各关节拖动转矩常数，取值范围 `[0, 2]`。
+
+#### `get_fric_factor_param()`
+
+- 描述：获取各关节摩擦力补偿系数。
+- 返回：`list[float]`，长度 = 自由度，各关节摩擦力系数，取值范围 `[0, 2]`。
+
+双臂（`CArmDualBot` / `CArmBust`）使用 `get_left_drag_param()` / `get_right_drag_param()` 与
+`get_left_fric_factor_param()` / `get_right_fric_factor_param()` 分别获取左右臂对应参数。
+
 ---
 
 ### 状态属性（只读）

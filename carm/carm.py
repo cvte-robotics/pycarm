@@ -377,6 +377,26 @@ class CArmSingleCol:
         """
         return self._impl.motor_temperature
 
+    def get_drag_param(self) -> list:
+        """获取机械臂拖动参数。
+
+        :return: list
+        """
+        params = self._impl.get_drag_param()
+        return (
+            params.get("torque_offset_factor", [])
+        )
+
+    def get_fric_factor_param(self) -> list:
+        """获取机械臂摩擦力参数。
+
+        :return: list
+        """
+        params = self._impl.get_drag_param()
+        return (
+            params.get("fric_compensation_factor", [])
+        )
+
     # ------------------------------------------------------------------ #
     #  末端执行器（通用 eeff）
     # ------------------------------------------------------------------ #
@@ -1767,6 +1787,20 @@ class CArmDualBot:
         """
         return self._left.get_motor_temperature()
 
+    def get_left_drag_param(self) -> list:
+        """获取左臂拖动参数。
+
+        :return: list
+        """
+        return self._left.get_drag_param()
+
+    def get_left_fric_factor_param(self) -> list:
+        """获取左臂摩擦力参数。
+
+        :return: list
+        """
+        return self._left.get_fric_factor_param()      
+
     def register_left_joint_cbk(self, cbk: Callable) -> None:
         """注册左臂关节状态回调。
 
@@ -2496,6 +2530,20 @@ class CArmDualBot:
         :return: list，温度；单位℃。
         """
         return self._right.get_motor_temperature()
+
+    def get_right_drag_param(self) -> list:
+        """获取右臂拖动参数。
+
+        :return: list
+        """
+        return self._right.get_drag_param()
+
+    def get_right_fric_factor_param(self) -> list:
+        """获取右臂摩擦力参数。
+
+        :return: list
+        """
+        return self._right.get_fric_factor_param()      
 
     def register_right_joint_cbk(self, cbk: Callable) -> None:
         """注册右臂关节状态回调。

@@ -262,6 +262,21 @@ class Carm:
                 }
         return res.get("params", {})
 
+    def get_drag_param(self) -> dict:
+        """
+        获取各关节拖动参数，包括关节拖动转矩常数、摩擦力系数
+
+        :return: dict, 包含控制器返回的以下字段
+
+                 - torque_offset_factor: [list[float]] 关节拖动转矩常数
+                 - fric_compensation_factor: [list[float]] 关节摩擦力系数
+        """
+        res = self.request({
+            "command": "getDragModeParams",
+            "arm_index": self.arm_index
+        })
+        return res.get("params", {})
+
     @property
     def joint_pos(self):
         """实际关节位置 (rad)"""
