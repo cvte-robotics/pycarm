@@ -1017,6 +1017,21 @@ class Carm:
             return res.get("coordinate", [])
         return []
 
+    def tool_mark_zero(self) -> bool:
+        """
+        将当前工具关节位置标定为对外零位，并把新的运动学参数持久化到工具配置。
+
+        运动任务执行期间无法标定；标定失败（如新的位置上限不合法）时控制器返回
+        ``Task_Reject``。
+
+        :return: bool, 标定是否成功
+        """
+        res = self.request({
+            "command": "toolMarkZero",
+            "arm_index": self.arm_index
+        })
+        return res.get("recv") == "Task_Recieve"
+
     # def set_tool_coordinate(self, index, coord) -> bool:
     #     """
     #     更新工具坐标系（工具末端相对法兰的位姿关系）
@@ -1203,6 +1218,75 @@ class Carm:
         })
         return res.get("recv") == "Task_Recieve"
 
+    def get_arm_angle(self):
+        """
+        获取当前实际臂型角角度（仅拟人臂 7 自由度运动学支持）
+
+        ``arm_angle`` 为当前关节位置解算出的臂型角；其他运动学或当前关节状态未就绪时
+        控制器返回 ``Task_Reject``。
+
+        :return: (bool, float), 是否成功，以及当前实际臂型角，单位弧度（rad）
+        """
+        res = self.request({
+            "command": "getArmAngle",
+            "arm_index": self.arm_index
+        })
+        if res.get("recv") != "Task_Recieve":
+            return False, 0.0
+        value = res.get("arm_angle")
+        if not isinstance(value, (int, float)):
+            return False, 0.0
+        return True, float(value)
+
+    def set_motion_params(self, kp=None, kd=None):
+        """
+        设置 MIT 模式运动参数
+
+        :param kp: list, 各关节刚度系数，长度需等于 dof
+
+        :param kd: list, 各关节阻尼系数，长度需等于 dof
+
+        :return: (bool, list, list), 是否成功，以及设置完成后控制器当前生效的 Kp/Kd
+        """
+        mit = {}
+        if kp:
+            if not self.__check_input_valid(kp):
+                return False, [], []
+            mit["Kp"] = list(kp)
+        if kd:
+            if not self.__check_input_valid(kd):
+                return False, [], []
+            mit["Kd"] = list(kd)
+        payload = {
+            "command": "setMotionParams",
+            "arm_index": self.arm_index,
+        }
+        if mit:
+            payload["MIT"] = mit
+        res = self.request(payload)
+        if res.get("recv") != "Task_Recieve":
+            return False, [], []
+        mit_out = res.get("MIT", {})
+        return True, list(mit_out.get("Kp", [])), list(mit_out.get("Kd", []))
+
+    def get_motion_params(self):
+        """
+        获取 MIT 模式运动参数
+
+        :return: (bool, list, list), 是否成功，以及控制器当前生效的 Kp/Kd
+        """
+        res = self.request({
+            "command": "getMotionParams",
+            "arm_index": self.arm_index,
+        })
+        if res.get("recv") != "Task_Recieve":
+            return False, [], []
+        mit = res.get("MIT")
+        if not isinstance(mit, dict) or not isinstance(mit.get("Kp"), list) or \
+                not isinstance(mit.get("Kd"), list):
+            return False, [], []
+        return True, list(mit["Kp"]), list(mit["Kd"])
+
     # -------------------- 运动接口 --------------------
     def track_joint(self, pos, end_effector=None) -> bool:
         """
@@ -1291,7 +1375,7 @@ class Carm:
     #         "eeff_tau": gripper
     #     })
 
-    def move_joint(self, pos, desire_time: float=-1, is_sync=True, tool=0) -> bool:
+    def move_joint(self, pos, desire_time: float=-1, is_sync=True, tool=0, speed: float=100) -> bool:
         """
         关节点的关节空间点到点运动
 
@@ -1302,6 +1386,8 @@ class Carm:
         :param is_sync: bool, 是否同步等待
 
         :param tool: int, 工具号
+
+        :param speed: float, 速度百分比（0~100），默认 100
         """
         if not self.__check_input_valid(pos):
             return False
@@ -1316,13 +1402,13 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 0},
-            "data": {"tool": tool, "target_pos": pos, "speed": 100}
+            "data": {"tool": tool, "target_pos": pos, "speed": speed}
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def move_pose(self, pos, desire_time: float=-1, is_sync=True, tool=0) -> bool:
+    def move_pose(self, pos, desire_time: float=-1, is_sync=True, tool=0, speed: float=100) -> bool:
         """
         笛卡尔点的关节空间点到点运动
 
@@ -1333,6 +1419,8 @@ class Carm:
         :param is_sync: bool, 是否同步等待
 
         :param tool: int, 工具号
+
+        :param speed: float, 速度百分比（0~100），默认 100
         """
         if not self.__check_input_valid(pos):
             return False
@@ -1347,13 +1435,13 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 1},
-            "data": {"tool": tool, "target_pos": pos, "speed": 100}
+            "data": {"tool": tool, "target_pos": pos, "speed": speed}
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def move_line_pose(self, pos, is_sync=True, tool=0) -> bool:
+    def move_line_pose(self, pos, is_sync=True, tool=0, speed: float=100) -> bool:
         """
         笛卡尔点的空间直线运动
 
@@ -1362,6 +1450,8 @@ class Carm:
         :param is_sync: bool, 是否同步等待
 
         :param tool: int, 工具号
+
+        :param speed: float, 速度百分比（0~100），默认 100
         """
         if not self.__check_input_valid(pos):
             return False
@@ -1374,13 +1464,13 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 1},
-            "data": {"tool": tool, "point": pos, "speed": 100}
+            "data": {"tool": tool, "point": pos, "speed": speed, "acc": speed}
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def move_line_joint(self, pos, is_sync=True, tool=0) -> bool:
+    def move_line_joint(self, pos, is_sync=True, tool=0, speed: float=100) -> bool:
         """
         关节点的空间直线运动
 
@@ -1389,6 +1479,8 @@ class Carm:
         :param is_sync: bool, 是否同步等待
 
         :param tool: int, 工具号
+
+        :param speed: float, 速度百分比（0~100），默认 100
         """
         if not self.__check_input_valid(pos):
             return False
@@ -1400,13 +1492,13 @@ class Carm:
             "task_level": "Task_General",
             "arm_index": self.arm_index,
             "point_type": {"space": 0},
-            "data": {"tool": tool, "point": pos, "speed": 100}
+            "data": {"tool": tool, "point": pos, "speed": speed, "acc": speed}
         })
         if is_sync and res.get("recv") == "Task_Recieve":
             self.__wait_task(res.get("task_key"))
         return res.get("recv") == "Task_Recieve"
 
-    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0) -> bool:
+    def move_flow_pose(self, target_pos, line_theta_weight=0.5, accuracy=0.0001, move_line=False, is_sync=True, tool=0, speed: float=100) -> bool:
         """
         笛卡尔雅可比迭代运动（TASK_FLOW）
 
@@ -1421,6 +1513,8 @@ class Carm:
         :param is_sync: bool, 是否同步等待
 
         :param tool: int, 工具号
+
+        :param speed: float, 速度百分比（0~100），默认 100，加速度 acc 与 speed 保持一致
         """
         if not self.__check_input_valid(target_pos):
             return False
@@ -1435,8 +1529,8 @@ class Carm:
             "arm_index": self.arm_index,
             "data": {
                 "target_pos": target_pos,
-                "speed": 100,          # 默认速度
-                "acc": 100,
+                "speed": speed,
+                "acc": speed,
                 "tool": tool
             },
             "params": {
@@ -1904,15 +1998,18 @@ class Carm:
     #     return res.get("recv") == "Task_Recieve"
 
     # -------------------- 运动学 --------------------
-    def inverse_kine(self, cart_pose, ref_joints, tool=0) -> list:
+    def inverse_kine(self, cart_pose, ref_joints, tool=0, chained=False) -> list:
         """
         逆运动学求解
 
         :param cart_pose: list, 目标位姿 [x, y, z, qx, qy, qz, qw]（单个或列表）
 
-        :param ref_joints: list, 参考关节角（单个或列表）
+        :param ref_joints: list, 参考关节角（单个或列表；链式求解时仅需第一个点的参考）
 
         :param tool: int, 工具号
+
+        :param chained: bool, 是否链式求解；为 True 时仅需传入一个参考关节角，
+        后续点以上一点求解结果作为参考；若中间某点逆解失败，则沿用最近一次成功求解的结果作为参考
 
         :return: list, 成功时返回解析过的结果（单个一维列表或二维列表）逆解失败则返回该空列表，如果错误返回空列表
         """
@@ -1924,17 +2021,30 @@ class Carm:
             cart_pose = [cart_pose]
             ref_joints = [ref_joints]
             is_list = None
-        assert len(cart_pose) == len(ref_joints)
+
+        if chained:
+            if not ref_joints:
+                print("Error: inverse_kine chained mode requires at least one ref_joint")
+                return []
+            # 链式求解仅取第一个参考关节角，多余的忽略
+            ref_joints = ref_joints[:1]
+        elif len(cart_pose) != len(ref_joints):
+            print(f"Error: inverse_kine cart_pose size != ref_joints size")
+            return []
 
         for p in cart_pose:
             if not self.__check_normalized(p):
                 return []
-        
-        data = {"tool": tool, "point_cnt": len(cart_pose)}
-        for i in range(len(ref_joints)):
+
+        data = {"tool": tool, "point_cnt": len(cart_pose), "chained": chained}
+        for i in range(len(cart_pose)):
             data[f"point{i+1}"] = cart_pose[i]
-            data[f"refer{i+1}"] = ref_joints[i]
-            
+        if chained:
+            data["refer"] = ref_joints[0]
+        else:
+            for i in range(len(ref_joints)):
+                data[f"refer{i+1}"] = ref_joints[i]
+
         ret = self.request({
             "command": "getKinematics",
             "task_id": "inverse",
@@ -2908,14 +3018,16 @@ class Carm:
 
         :param joint_acc: list, 关节角加速度
 
-        :return: tuple, (success: bool, tool: int, m_force: list, c_force: list, g_force: list)
+        :return: tuple, (success: bool, tool: int, m_force: list, c_force: list, g_force: list,
+                         fric_force: list)
         """
         res = self.request({"command": "getDynamics", "arm_index": self.arm_index,
                            "joint_pos": list(joint_pos), "joint_vel": list(joint_vel),
                            "joint_acc": list(joint_acc)})
         if res.get("recv") == "Task_Recieve":
-            return True, res.get("tool", 0), res.get("m_force", []), res.get("c_force", []), res.get("g_force", [])
-        return False, 0, [], [], []
+            return (True, res.get("tool", 0), res.get("m_force", []), res.get("c_force", []),
+                    res.get("g_force", []), res.get("fric_force", []))
+        return False, 0, [], [], [], []
 
     def low_get_jacobian(self, joint_pos) -> tuple:
         """

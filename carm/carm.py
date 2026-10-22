@@ -142,19 +142,24 @@ class CArmSingleCol:
         """
         return _to_int(self._impl.set_control_mode(mode))
 
-    def set_passthrough_data(self, mode: int, can_id: int, data: list) -> int:
+    def set_passthrough_data(self, mode: int, can_id: list, data: list) -> int:
         """通过控制器透传CAN数据。
 
         :param mode: [输入] 透传模式枚举值。
-        :param can_id: [输入/输出] CAN帧ID。
+        :param can_id: [输入/输出] 单元素列表，元素为 CAN 帧 ID（int）。对齐
+                       C++ ``uint32_t&``：接收模式（mode=1/2）成功后就地回写
+                       响应 CAN ID 到 ``can_id[0]``。
         :param data: [输入/输出] CAN负载字节列表；单位byte，成功时写入响应负载。
         :return: int，1表示成功，-1表示失败。
         """
-        ok, _ret_can_id, ret_data = self._impl.set_passthrough_data(
-            mode, can_id, data)
+        ok, ret_can_id, ret_data = self._impl.set_passthrough_data(
+            mode, can_id[0] if can_id else 0, data)
         if ok:
-            # TODO: Python int 不可变，需确定响应 CAN ID 的输出方式后再实现回写。
-            can_id = _ret_can_id
+            if ret_can_id is not None:
+                if can_id:
+                    can_id[0] = ret_can_id
+                else:
+                    can_id.append(ret_can_id)
             if ret_data is not None and isinstance(data, list):
                 data.clear()
                 data.extend(ret_data)
@@ -226,6 +231,58 @@ class CArmSingleCol:
         """
         return _to_int(self._impl.set_arm_angle(arm_angle))
 
+    def get_arm_angle(self, out_arm_angle: Optional[list] = None) -> int:
+        """获取当前实际臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param out_arm_angle: [输出] 单元素列表，成功后写入当前实际臂型角；
+                              单位弧度（rad）；失败时不填充。
+        :return: int，1表示成功，-1表示失败。
+        """
+        ok, arm_angle = self._impl.get_arm_angle()
+        if ok and isinstance(out_arm_angle, list):
+            out_arm_angle.clear()
+            out_arm_angle.append(arm_angle)
+        return _to_int(ok)
+
+    def set_motion_params(self, kp: list, kd: list,
+                          out_kp: Optional[list] = None,
+                          out_kd: Optional[list] = None) -> int:
+        """设置 MIT 模式运动参数，需在非运动状态下设置。
+
+        :param kp: [输入] 各关节刚度系数，长度=dof；空列表表示不修改该项。
+        :param kd: [输入] 各关节阻尼系数，长度=dof；空列表表示不修改该项。
+        :param out_kp: [输出] 设置完成后控制器当前生效的 Kp。
+        :param out_kd: [输出] 设置完成后控制器当前生效的 Kd。
+        :return: int，1表示成功，-1表示失败。
+        """
+        ok, resp_kp, resp_kd = self._impl.set_motion_params(kp, kd)
+        if ok:
+            if isinstance(out_kp, list):
+                out_kp.clear()
+                out_kp.extend(resp_kp)
+            if isinstance(out_kd, list):
+                out_kd.clear()
+                out_kd.extend(resp_kd)
+        return _to_int(ok)
+
+    def get_motion_params(self, out_kp: Optional[list] = None,
+                          out_kd: Optional[list] = None) -> int:
+        """获取 MIT 模式运动参数。
+
+        :param out_kp: [输出] 控制器当前生效的 Kp。
+        :param out_kd: [输出] 控制器当前生效的 Kd。
+        :return: int，1表示成功，-1表示失败。
+        """
+        ok, kp, kd = self._impl.get_motion_params()
+        if ok:
+            if isinstance(out_kp, list):
+                out_kp.clear()
+                out_kp.extend(kp)
+            if isinstance(out_kd, list):
+                out_kd.clear()
+                out_kd.extend(kd)
+        return _to_int(ok)
+
     def set_collision_config(self, enable_flag: bool = True,
                              sensitivity_level: int = 0) -> int:
         """设置机械臂碰撞检测配置。
@@ -258,6 +315,15 @@ class CArmSingleCol:
         :return: list，[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
         """
         return self._impl.get_tool_coordinate(index)
+
+    def tool_mark_zero(self) -> int:
+        """将当前工具关节位置标定为对外零位，并持久化新的运动学参数。
+
+        运动任务执行期间无法标定，标定失败（如新的位置上限不合法）时返回失败。
+
+        :return: int，1表示成功，-1表示失败。
+        """
+        return _to_int(self._impl.tool_mark_zero())
 
     # ------------------------------------------------------------------ #
     #  版本 / 配置 / 状态
@@ -808,15 +874,27 @@ class CArmSingleCol:
         return 1
 
     def inverse_kine_array(self, tool_index: int, quat_pose: list,
-                           ref_joint: list, jnt_value: list) -> int:
+                           ref_joint: list, jnt_value: list,
+                           chained: bool = False) -> int:
         """批量计算机械臂逆运动学。
 
         :param tool_index: [输入] 工具编号。
         :param quat_pose: [输入] 笛卡尔位姿或位姿数组[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
-        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad。
+        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad；链式求解时仅需第一个点的参考。
         :param jnt_value: [输出] 关节位置或其数组；单位rad。
+        :param chained: [输入] 是否链式求解；为 True 时仅传入一个参考关节角，
+        后续点以上一点求解结果作为参考；若中间某点逆解失败，则沿用最近一次成功求解的结果作为参考。
         :return: int，1表示成功，-1表示失败。
         """
+        if chained:
+            result = self._impl.inverse_kine(quat_pose, ref_joint,
+                                             tool=tool_index, chained=True)
+            if not result:
+                return -1
+            if isinstance(jnt_value, list):
+                jnt_value.clear()
+                jnt_value.extend(result)
+            return 1
         results = []
         for pose, ref in zip(quat_pose, ref_joint):
             r = self._impl.inverse_kine(pose, ref, tool=tool_index)
@@ -936,6 +1014,23 @@ class CArmSingleCol:
         """
         self._release_keyed_cbk("get_external_force", "_ext_force_cbks")
 
+    def register_eeff_cbk(self, cbk: Callable) -> None:
+        """注册末端执行器状态回调。
+
+        :param cbk: [输入] 回调函数，签名为 cbk(time, eeff_pos, eeff_vel, eeff_tau)。
+        :return: 无返回值。
+        """
+        self._register_keyed_cbk("get_eeff", cbk, "_eeff_cbks",
+                                 lambda c: self._impl.on_update(
+                                     lambda msg: self._dispatch_eeff(c, msg)))
+
+    def release_eeff_cbk(self) -> None:
+        """注销末端执行器状态回调。
+
+        :return: 无返回值。
+        """
+        self._release_keyed_cbk("get_eeff", "_eeff_cbks")
+
     def register_error_cbk(self, key: str, cbk: Callable) -> None:
         """注册错误回调。
 
@@ -1023,6 +1118,14 @@ class CArmSingleCol:
         for cbk in store.values():
             cbk(t, st.get("joint_external_tau", []),
                  st.get("cart_external_force", []))
+
+    def _dispatch_eeff(self, store, msg):
+        st = self._impl._arm_state
+        t = st.get("Unix_time_stamp", 0.0)
+        eeff = st.get("eeff", {})
+        for cbk in store.values():
+            cbk(t, eeff.get("eeff_pos", []), eeff.get("eeff_vel", []),
+                eeff.get("eeff_tau", []))
 
     def _dispatch_error(self, store, code, msg):
         for cbk in store.values():
@@ -1231,8 +1334,8 @@ class CArmSingleCol:
 
     def low_get_dynamics(self, joint_pos: list, joint_vel: list,
                          joint_acc: list, tool: list, m_force: list,
-                         c_force: list, g_force: list) -> int:
-        """计算关节动力学的惯性、科里奥利/离心力及重力分量。
+                         c_force: list, g_force: list, fric_force: list) -> int:
+        """计算关节动力学的惯性、科里奥利/离心力、重力及摩擦力分量。
 
         :param joint_pos: [输入] 关节位置，长度=dof；单位rad。
         :param joint_vel: [输入] 关节速度，长度=dof；单位rad/s。
@@ -1241,17 +1344,17 @@ class CArmSingleCol:
         :param m_force: [输出] 惯性项关节力矩，长度=dof；单位Nm。
         :param c_force: [输出] 科里奥利及离心项关节力矩，长度=dof；单位Nm。
         :param g_force: [输出] 重力项关节力矩，长度=dof；单位Nm。
+        :param fric_force: [输出] 摩擦力矩，长度=dof；单位Nm。
         :return: 1 表示成功，-1 表示失败。
         """
-        ok, result_tool, result_m, result_c, result_g = self._impl.low_get_dynamics(
-            joint_pos, joint_vel, joint_acc)
+        ok, result_tool, result_m, result_c, result_g, result_fric = self._impl.low_get_dynamics(joint_pos, joint_vel, joint_acc)
         if not ok:
             return -1
         if isinstance(tool, list):
             tool.clear()
             tool.append(result_tool)
         for result, container in [(result_m, m_force), (result_c, c_force),
-                                  (result_g, g_force)]:
+                                  (result_g, g_force), (result_fric, fric_force) ]:
             if isinstance(container, list):
                 container.clear()
                 container.extend(result)
@@ -1589,6 +1692,60 @@ class CArmDualBot:
         :return: int，1表示成功，-1表示失败。
         """
         return self._right.set_arm_angle(arm_angle)
+
+    def get_left_arm_angle(self, out_arm_angle: Optional[list] = None) -> int:
+        """获取左臂当前实际臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param out_arm_angle: [输出] 单元素列表，成功后写入当前实际臂型角；
+                              单位弧度（rad）；失败时不填充。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._left.get_arm_angle(out_arm_angle)
+
+    def get_right_arm_angle(self, out_arm_angle: Optional[list] = None) -> int:
+        """获取右臂当前实际臂型角角度（仅拟人臂 7 自由度运动学支持）。
+
+        :param out_arm_angle: [输出] 单元素列表，成功后写入当前实际臂型角；
+                              单位弧度（rad）；失败时不填充。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._right.get_arm_angle(out_arm_angle)
+
+    def set_left_motion_params(self, kp: list, kd: list,
+                               out_kp: Optional[list] = None,
+                               out_kd: Optional[list] = None) -> int:
+        """设置左臂 MIT 模式运动参数。
+
+        :param kp: [输入] 各关节刚度系数，长度=dof；空列表表示不修改该项。
+        :param kd: [输入] 各关节阻尼系数，长度=dof；空列表表示不修改该项。
+        :param out_kp: [输出] 设置完成后控制器当前生效的 Kp。
+        :param out_kd: [输出] 设置完成后控制器当前生效的 Kd。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._left.set_motion_params(kp, kd, out_kp, out_kd)
+
+    def set_right_motion_params(self, kp: list, kd: list,
+                                out_kp: Optional[list] = None,
+                                out_kd: Optional[list] = None) -> int:
+        """设置右臂 MIT 模式运动参数。
+
+        :param kp: [输入] 各关节刚度系数，长度=dof；空列表表示不修改该项。
+        :param kd: [输入] 各关节阻尼系数，长度=dof；空列表表示不修改该项。
+        :param out_kp: [输出] 设置完成后控制器当前生效的 Kp。
+        :param out_kd: [输出] 设置完成后控制器当前生效的 Kd。
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._right.set_motion_params(kp, kd, out_kp, out_kd)
+
+    def get_left_motion_params(self, out_kp: Optional[list] = None,
+                               out_kd: Optional[list] = None) -> int:
+        """获取左臂 MIT 模式运动参数。"""
+        return self._left.get_motion_params(out_kp, out_kd)
+
+    def get_right_motion_params(self, out_kp: Optional[list] = None,
+                                out_kd: Optional[list] = None) -> int:
+        """获取右臂 MIT 模式运动参数。"""
+        return self._right.get_motion_params(out_kp, out_kd)
 
     def set_collision_config(self, enable_flag: bool = True,
                              sensitivity_level: int = 0) -> int:
@@ -2218,6 +2375,15 @@ class CArmDualBot:
         """
         return self._left.get_tool_coordinate(index)
 
+    def left_tool_mark_zero(self) -> int:
+        """将左臂当前工具关节位置标定为对外零位，并持久化新的运动学参数。
+
+        运动任务执行期间无法标定，标定失败（如新的位置上限不合法）时返回失败。
+
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._left.tool_mark_zero()
+
     def trajectory_teach_left(self, off_on: bool, name: str) -> int:
         """执行左臂示教轨迹录制。
 
@@ -2261,17 +2427,20 @@ class CArmDualBot:
         return self._left.forward_kine(tool_index, jnt_value, quat_pose)
 
     def inverse_kine_left_array(self, tool_index: int, quat_pose: list,
-                                ref_joint: list, jnt_value: list) -> int:
+                                ref_joint: list, jnt_value: list,
+                                chained: bool = False) -> int:
         """执行左臂批量逆运动学。
 
         :param tool_index: [输入] 工具编号。
         :param quat_pose: [输入] 笛卡尔位姿或位姿数组[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
-        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad。
+        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad；链式求解时仅需第一个点的参考。
         :param jnt_value: [输出] 关节位置或其数组；单位rad。
+        :param chained: [输入] 是否链式求解；为 True 时仅传入一个参考关节角，
+        后续点以上一点求解结果作为参考；若中间某点逆解失败，则沿用最近一次成功求解的结果作为参考。
         :return: int，1表示成功，-1表示失败。
         """
         return self._left.inverse_kine_array(tool_index, quat_pose,
-                                             ref_joint, jnt_value)
+                                             ref_joint, jnt_value, chained)
 
     def forward_kine_left_array(self, tool_index: int, jnt_value: list,
                                 quat_pose: list) -> int:
@@ -2385,7 +2554,8 @@ class CArmDualBot:
 
     def low_left_get_dynamics(self, joint_pos: list, joint_vel: list,
                               joint_acc: list, tool: list, m_force: list,
-                              c_force: list, g_force: list) -> int:
+                              c_force: list, g_force: list,
+                              fric_force: list) -> int:
         """计算左臂动力学。
 
         :param joint_pos: [输入] 关节位置；单位rad。
@@ -2395,10 +2565,11 @@ class CArmDualBot:
         :param m_force: [输出] 惯性项力矩；单位Nm。
         :param c_force: [输出] 科里奥利/离心项力矩；单位Nm。
         :param g_force: [输出] 重力项力矩；单位Nm。
+        :param fric_force: [输出] 摩擦力矩；单位Nm。
         :return: int，1表示成功，-1表示失败。
         """
         return self._left.low_get_dynamics(joint_pos, joint_vel, joint_acc,
-                                           tool, m_force, c_force, g_force)
+                                           tool, m_force, c_force, g_force, fric_force)
 
     def low_left_get_jacobian(self, joint_pos: list, tool: list,
                               mat: list) -> int:
@@ -2998,6 +3169,15 @@ class CArmDualBot:
         """
         return self._right.get_tool_coordinate(index)
 
+    def right_tool_mark_zero(self) -> int:
+        """将右臂当前工具关节位置标定为对外零位，并持久化新的运动学参数。
+
+        运动任务执行期间无法标定，标定失败（如新的位置上限不合法）时返回失败。
+
+        :return: int，1表示成功，-1表示失败。
+        """
+        return self._right.tool_mark_zero()
+
     def trajectory_teach_right(self, off_on: bool, name: str) -> int:
         """执行右臂示教轨迹录制。
 
@@ -3052,17 +3232,20 @@ class CArmDualBot:
         return self._right.forward_kine(tool_index, jnt_value, quat_pose)
 
     def inverse_kine_right_array(self, tool_index: int, quat_pose: list,
-                                 ref_joint: list, jnt_value: list) -> int:
+                                 ref_joint: list, jnt_value: list,
+                                 chained: bool = False) -> int:
         """执行右臂批量逆运动学。
 
         :param tool_index: [输入] 工具编号。
         :param quat_pose: [输入] 笛卡尔位姿或位姿数组[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
-        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad。
+        :param ref_joint: [输入] 逆解参考关节位置或其数组；单位rad；链式求解时仅需第一个点的参考。
         :param jnt_value: [输出] 关节位置或其数组；单位rad。
+        :param chained: [输入] 是否链式求解；为 True 时仅传入一个参考关节角，
+        后续点以上一点求解结果作为参考；若中间某点逆解失败，则沿用最近一次成功求解的结果作为参考。
         :return: int，1表示成功，-1表示失败。
         """
         return self._right.inverse_kine_array(tool_index, quat_pose,
-                                              ref_joint, jnt_value)
+                                              ref_joint, jnt_value, chained)
 
     def forward_kine_right_array(self, tool_index: int, jnt_value: list,
                                  quat_pose: list) -> int:
@@ -3177,7 +3360,8 @@ class CArmDualBot:
 
     def low_right_get_dynamics(self, joint_pos: list, joint_vel: list,
                                joint_acc: list, tool: list, m_force: list,
-                               c_force: list, g_force: list) -> int:
+                               c_force: list, g_force: list,
+                               fric_force: list) -> int:
         """计算右臂动力学。
 
         :param joint_pos: [输入] 关节位置；单位rad。
@@ -3187,10 +3371,11 @@ class CArmDualBot:
         :param m_force: [输出] 惯性项力矩；单位Nm。
         :param c_force: [输出] 科里奥利/离心项力矩；单位Nm。
         :param g_force: [输出] 重力项力矩；单位Nm。
+        :param fric_force: [输出] 摩擦力矩；单位Nm。
         :return: int，1表示成功，-1表示失败。
         """
         return self._right.low_get_dynamics(joint_pos, joint_vel, joint_acc,
-                                            tool, m_force, c_force, g_force)
+                                            tool, m_force, c_force, g_force, fric_force)
 
     def low_right_get_jacobian(self, joint_pos: list, tool: list,
                                mat: list) -> int:
@@ -3223,8 +3408,9 @@ class CArmBust(CArmDualBot):
     """上半身控制器。
 
     组合左右七自由度手臂和两自由度腰部。左右臂接口继承自
-    :class:`CArmDualBot`；腰部仅提供关节空间运动、关节状态、示教与底层
-    关节控制接口，不提供工具、末端执行器、透传或任务空间接口。
+    :class:`CArmDualBot`；腰部提供关节空间运动、迭代式任务空间计算
+    （``track_waist_pose``、``move_waist_flow_pose``）、关节状态、示教与底层
+    关节控制接口；不提供工具、末端执行器、透传及解析解正逆运动学。
     """
 
     def __init__(self, server_ip: str = "10.42.0.101", port: int = 8090,
@@ -3581,6 +3767,40 @@ class CArmBust(CArmDualBot):
         :return: 无返回值。
         """
         self._waist.release_plan_joint_cbk()
+
+    def track_joint(self, left_targets: list, right_targets: list,
+                    waist_targets: list, left_eeff_pos: float = -1,
+                    right_eeff_pos: float = -1) -> int:
+        """周期性发送双臂及腰部目标关节位置。
+
+        :param left_targets: [输入] 左臂目标关节位置，长度=左臂dof；单位rad。
+        :param right_targets: [输入] 右臂目标关节位置，长度=右臂dof；单位rad。
+        :param waist_targets: [输入] 腰部目标关节位置，长度=腰部dof；单位rad。
+        :param left_eeff_pos: [输入] 左臂末端执行器目标位置；单位rad或m；负值表示不更新。
+        :param right_eeff_pos: [输入] 右臂末端执行器目标位置；单位rad或m；负值表示不更新。
+        :return: int，1表示成功，-1表示失败。
+        """
+        self.track_left_joint(left_targets, left_eeff_pos)
+        self.track_right_joint(right_targets, right_eeff_pos)
+        self.track_waist_joint(waist_targets)
+        return 1
+
+    def track_pose(self, left_targets: list, right_targets: list,
+                   waist_targets: list, left_eeff_pos: float = -1,
+                   right_eeff_pos: float = -1) -> int:
+        """周期性发送双臂及腰部法兰相对基座的目标位姿。
+
+        :param left_targets: [输入] 左臂位姿[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
+        :param right_targets: [输入] 右臂位姿[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
+        :param waist_targets: [输入] 腰部位姿[x,y,z,qx,qy,qz,qw]；位置单位m，姿态为归一化四元数。
+        :param left_eeff_pos: [输入] 左臂末端执行器目标位置；单位rad或m；负值表示不更新。
+        :param right_eeff_pos: [输入] 右臂末端执行器目标位置；单位rad或m；负值表示不更新。
+        :return: int，1表示成功，-1表示失败。
+        """
+        self.track_left_pose(left_targets, left_eeff_pos)
+        self.track_right_pose(right_targets, right_eeff_pos)
+        self.track_waist_pose(waist_targets)
+        return 1
 
     def track_waist_joint(self, targets: list) -> int:
         """实时跟随腰部关节目标。

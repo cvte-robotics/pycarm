@@ -133,9 +133,12 @@ python3 -m twine upload --repository pypi dist/*
 - 回调与示教：`register_waist_joint_cbk`、`register_waist_plan_joint_cbk`、`trajectory_teach_waist`、`trajectory_recorder_waist`；`trajectory_teach` 同步控制左臂、右臂和腰部
 - 底层关节控制：`low_waist_pv_command`、`low_waist_mit_command`、`low_waist_pf_command`、`low_waist_current_command`、`low_waist_refresh`、`low_waist_set_robot_mode`、`low_waist_set_servo_enable`、`low_waist_reset`、`low_waist_get_servo_status`
 
-腰部不提供工具号、末端执行器、夹爪/灵巧手、协议透传、笛卡尔位姿/外力、任务空间运动或运动学接口。
+腰部不提供工具号、末端执行器、夹爪/灵巧手、协议透传、笛卡尔位姿查询/外力，也不提供解析解的正逆运动学（腰部自由度少，逆解无意义）；但 `track_waist_pose`、`move_waist_flow_pose` 等迭代式任务空间计算是提供的。
 `CArmBust.check_teach` 需要依次传入左臂、右臂和腰部三个轨迹列表；所有
 `trajectory_teach*` 接口均要求显式传入轨迹名称。
+
+`CArmBust` 覆盖了双臂的 `track_joint` / `track_pose`：在双臂参数基础上新增第三参数
+`waist_targets`（腰部目标关节位置 / 位姿），一次调用同时跟随左臂、右臂和腰部。
 
 ### 兼容性
 
@@ -378,18 +381,19 @@ robot.set_control_mode(3)  # 进入拖动模式
   `set_right_ecat_passthrough_data`（见下文 `set_ecat_passthrough_data`）。
 - 参数：
   - `mode` (int): 模式，0-仅发送，1-仅接收，2-发送并接收。
-  - `can_id` (int): CAN ID（输入/输出；响应ID回写方式待实现）。
+  - `can_id` (list[int]): 单元素列表，元素为 CAN ID。对齐 C++ `uint32_t&`：
+    接收模式（`mode=1/2`）成功后就地回写响应 CAN ID 到 `can_id[0]`。
   - `data` (list/str): 透传数据（字节列表或十六进制字符串等，需底层支持）。
-- 返回：`CArmSingleCol` 返回 `1/-1`，并在接收成功时原地更新 `data`；底层
-  `Carm` 返回 `(success, can_id, bytes_data)` 三元组。
+- 返回：`CArmSingleCol` 返回 `1/-1`，接收成功时原地更新 `can_id`（列表形式）和
+  `data`；底层 `Carm` 返回 `(success, can_id, bytes_data)` 三元组。
 
 **python**
 
 ```python
-can_id = 0x01
+can_id = [0x01]  # 单元素 list，元素是 int
 data = [0x0A, 0x0B]
 ret = robot.set_passthrough_data(mode=1, can_id=can_id, data=data)
-print(ret, can_id, data)
+print(ret, can_id[0], data)  # 接收成功时 can_id[0] 被响应 CAN ID 覆盖
 ```
 
 #### `set_ecat_passthrough_data(mode, frame, timeout_ms=100)`
@@ -543,6 +547,19 @@ robot.set_tool_index(1)
   - `tool` (int): 工具号。
 - 返回：工具的笛卡尔坐标 `[x, y, z, qx, qy, qz, qw]` 列表，失败或异常返回空列表 `[]`。
 
+#### `tool_mark_zero()`
+
+- 描述：将当前工具关节位置标定为对外零位，并把新的运动学参数（`bias_distance`、`pos_upper`）持久化到工具配置。
+- 说明：运动任务执行期间无法标定；标定失败（如新的位置上限不合法）时返回失败。
+- 返回：`bool`，是否标定成功；运动任务执行期间或标定失败时返回 `False`。
+- 双臂：`left_tool_mark_zero()` / `right_tool_mark_zero()`。
+
+**python**
+
+```python
+ok = robot.tool_mark_zero()
+```
+
 #### `set_collision_config(flag=True, level=0)`
 
 - 描述：配置碰撞检测。
@@ -593,6 +610,54 @@ robot.stop(1)  # 停止
 
 ```
 robot.set_speed_level(3.0, response_level=10)
+```
+
+#### `get_arm_angle()`
+
+- 描述：获取当前实际臂型角角度（仅拟人臂 7 自由度运动学支持）。
+- 说明：`arm_angle` 为当前关节位置解算出的臂型角；其他运动学或当前关节状态未就绪时控制器返回 `Task_Reject`。
+- 返回：`(bool, float)`，是否成功，以及当前实际臂型角，单位弧度（rad）。
+- 高层 `CArmSingleCol` 对齐 C++：返回 `int`（`1` 成功 / `-1` 失败），结果通过
+  `out_arm_angle` 单元素列表就地填充。
+- 双臂：`get_left_arm_angle(out_arm_angle)` / `get_right_arm_angle(out_arm_angle)`。
+
+**python**
+
+```python
+# 内核 Carm
+ok, arm_angle = robot.get_arm_angle()
+
+# 高层 CArmSingleCol（对齐 C++ 输出参数）
+angle = []
+if robot.get_arm_angle(angle) == 1:
+    print(angle[0])
+```
+
+#### `set_motion_params(kp=None, kd=None)`
+
+- 描述：设置 MIT 模式运动参数，需在非运动状态下设置。
+- 参数：
+  - `kp` (list, optional): 各关节刚度系数，长度 = 自由度；省略或空列表表示不修改该项。
+  - `kd` (list, optional): 各关节阻尼系数，长度 = 自由度；省略或空列表表示不修改该项。
+- 返回：`(bool, list, list)`，是否成功，以及设置完成后控制器当前生效的 Kp/Kd。
+- 双臂：`set_left_motion_params()` / `set_right_motion_params()`（同名输出参数通过引用/容器就地填充）。
+
+**python**
+
+```python
+ok, kp, kd = robot.set_motion_params([100] * 6, [10] * 6)
+```
+
+#### `get_motion_params()`
+
+- 描述：获取 MIT 模式运动参数。
+- 返回：`(bool, list, list)`，是否成功，以及控制器当前生效的 Kp/Kd。
+- 双臂：`get_left_motion_params()` / `get_right_motion_params()`。
+
+**python**
+
+```python
+ok, kp, kd = robot.get_motion_params()
 ```
 
 ---
@@ -768,13 +833,14 @@ print("Recorded trajectories:", traj_list)
 
 ### 运动学
 
-#### `inverse_kine(cart_pose, ref_joints, tool=0)`
+#### `inverse_kine(cart_pose, ref_joints, tool=0, chained=False)`
 
 - 描述：逆运动学求解。
 - 参数：
   - `cart_pose` (list 或 list of lists): 目标位姿（单个或多个）。
-  - `ref_joints` (list 或 list of lists): 参考关节角。
+  - `ref_joints` (list 或 list of lists): 参考关节角。链式求解时仅需第一个点的参考。
   - `tool` (int): 工具号。
+  - `chained` (bool): 是否链式求解。为 `True` 时仅传入一个参考关节角，后续点以上一点求解结果作为参考；若中间某点逆解失败，则沿用最近一次成功求解的结果作为参考。
 - 返回：成功时返回解析过的关节角结果（单个一维列表或二维列表）。失败或异常返回空列表 `[]`。
 
 **python**
@@ -945,13 +1011,13 @@ print("Cartesian pose:", pose)
 - 输出：`quat_pose=[x,y,z,qx,qy,qz,qw]`，位置单位m、四元数无单位。
 - 返回：`int`，1 表示成功，-1 表示失败。
 
-##### `low_get_dynamics(joint_pos, joint_vel, joint_acc, tool, m_force, c_force, g_force)`
+##### `low_get_dynamics(joint_pos, joint_vel, joint_acc, tool, m_force, c_force, g_force, fric_force)`
 
-- 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)分量。
+- 描述：计算惯性矩阵(M)、科里奥利力(C)、重力(G)及摩擦力分量。
 - 输入：`joint_pos`、`joint_vel`、`joint_acc` 单位依次为rad或m、rad/s或m/s、
   rad/s²或m/s²。
-- 输出：`tool` 为单元素工具编号列表；`m_force`、`c_force`、`g_force` 为惯性、
-  科里奥利/离心及重力项，单位N·m或N。
+- 输出：`tool` 为单元素工具编号列表；`m_force`、`c_force`、`g_force` 和
+  `fric_force` 分别为惯性、科里奥利/离心、重力及关节摩擦力分量，单位N·m或N。
 - 返回：`int`，1 表示成功，-1 表示失败。
 
 ##### `low_get_jacobian(joint_pos, tool, mat)`
