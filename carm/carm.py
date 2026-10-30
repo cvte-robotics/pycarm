@@ -44,6 +44,31 @@ class CArmSingleCol:
         self._impl = Carm(addr=server_ip, arm_index=arm_index, port=port)
         self._arm_index = arm_index
         self._validate_arm = _validate_arm
+
+        # 各类回调的 store（get_* 键值对）
+        self._joint_cbks = {}
+        self._pose_cbks = {}
+        self._plan_joint_cbks = {}
+        self._plan_pose_cbks = {}
+        self._ext_force_cbks = {}
+        self._eeff_cbks = {}
+        self._error_cbks = {}
+        self._completion_cbks = {}
+
+        # on_update 列表：每个元素是一个更新类别 (store, dispatch_fn)
+        self._update_cbks = [
+            (self._joint_cbks, self._dispatch_joint),
+            (self._pose_cbks, self._dispatch_pose),
+            (self._plan_joint_cbks, self._dispatch_plan_joint),
+            (self._plan_pose_cbks, self._dispatch_plan_pose),
+            (self._ext_force_cbks, self._dispatch_ext_force),
+            (self._eeff_cbks, self._dispatch_eeff),
+        ]
+
+        # 核心只提供一个回调函数，多回调在上层 fan-out
+        self._impl.on_update(self._on_update)
+        self._impl.on_error(self._on_error)
+        self._impl.on_task_finish(self._on_task_finish)
         # 对齐 C++ CArmSingleCol：A3（六轴）系列单臂专用，构造时若已连接则校验臂型
         time.sleep(0.1)
         if self._validate_arm and self._impl.is_connected() \
@@ -935,9 +960,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_joint", cbk, "_joint_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_joint(c, msg)))
+        self._register_keyed_cbk("get_joint", cbk, "_joint_cbks")
 
     def release_joint_cbk(self) -> None:
         """注销关节状态回调。
@@ -952,9 +975,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_pose", cbk, "_pose_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_pose(c, msg)))
+        self._register_keyed_cbk("get_pose", cbk, "_pose_cbks")
 
     def release_pose_cbk(self) -> None:
         """注销位姿状态回调。
@@ -969,9 +990,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_cmd_joint", cbk, "_plan_joint_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_plan_joint(c, msg)))
+        self._register_keyed_cbk("get_cmd_joint", cbk, "_plan_joint_cbks")
 
     def release_plan_joint_cbk(self) -> None:
         """注销规划关节状态回调。
@@ -986,9 +1005,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_cmd_pose", cbk, "_plan_pose_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_plan_pose(c, msg)))
+        self._register_keyed_cbk("get_cmd_pose", cbk, "_plan_pose_cbks")
 
     def release_plan_pose_cbk(self) -> None:
         """注销规划位姿回调。
@@ -1003,9 +1020,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_external_force", cbk, "_ext_force_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_ext_force(c, msg)))
+        self._register_keyed_cbk("get_external_force", cbk, "_ext_force_cbks")
 
     def release_external_force_cbk(self) -> None:
         """注销外力回调。
@@ -1020,9 +1035,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数，签名为 cbk(time, eeff_pos, eeff_vel, eeff_tau)。
         :return: 无返回值。
         """
-        self._register_keyed_cbk("get_eeff", cbk, "_eeff_cbks",
-                                 lambda c: self._impl.on_update(
-                                     lambda msg: self._dispatch_eeff(c, msg)))
+        self._register_keyed_cbk("get_eeff", cbk, "_eeff_cbks")
 
     def release_eeff_cbk(self) -> None:
         """注销末端执行器状态回调。
@@ -1038,10 +1051,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数，签名为 cbk(error_code, error_message)。
         :return: 无返回值。
         """
-        self._register_keyed_cbk(key, cbk, "_error_cbks",
-                                 lambda c: self._impl.on_error(
-                                     lambda info: self._dispatch_error(
-                                         c, info.get("error", 0), info.get("errMsg", ""))))
+        self._register_keyed_cbk(key, cbk, "_error_cbks")
 
     def release_error_cbk(self, key: str) -> None:
         """注销错误回调。
@@ -1058,9 +1068,7 @@ class CArmSingleCol:
         :param cbk: [输入] 回调函数；参数单位由对应状态量定义。
         :return: 无返回值。
         """
-        self._register_keyed_cbk(key, cbk, "_completion_cbks",
-                                 lambda c: self._impl.on_task_finish(
-                                     lambda task_key: self._dispatch_completion(c, task_key)))
+        self._register_keyed_cbk(key, cbk, "_completion_cbks")
 
     def release_completion_cbk(self, key: str) -> None:
         """注销任务完成回调。
@@ -1071,18 +1079,23 @@ class CArmSingleCol:
         self._release_keyed_cbk(key, "_completion_cbks")
 
     # ---- 回调内部辅助 ----
-    def _register_keyed_cbk(self, key, cbk, attr_name, registrator):
-        if not hasattr(self, attr_name):
-            setattr(self, attr_name, {})
-        store = getattr(self, attr_name)
-        if not store:
-            # 第一次注册时才挂载底层回调
-            registrator(store)
-        store[key] = cbk
+    def _register_keyed_cbk(self, key, cbk, attr_name):
+        getattr(self, attr_name)[key] = cbk
 
     def _release_keyed_cbk(self, key, attr_name):
-        store = getattr(self, attr_name, {})
-        store.pop(key, None)
+        getattr(self, attr_name).pop(key, None)
+
+    # ---- 核心单回调的分发（上层 fan-out） ----
+    def _on_update(self, msg):
+        for store, dispatch in self._update_cbks:
+            dispatch(store, msg)
+
+    def _on_error(self, info):
+        self._dispatch_error(self._error_cbks,
+                             info.get("error", 0), info.get("errMsg", ""))
+
+    def _on_task_finish(self, task_key):
+        self._dispatch_completion(self._completion_cbks, task_key)
 
     def _dispatch_joint(self, store, msg):
         st = self._impl._arm_state
